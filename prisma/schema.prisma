@@ -1,0 +1,387 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// Enums stored as String for consistency across all models.
+
+model Supplier {
+  id           String  @id @default(cuid())
+  name         String
+  phone        String?
+  email        String?
+  notes        String?
+  paymentTerms String  @default("ON_DELIVERY") // ON_DELIVERY | IMMEDIATE | CREDIT
+  creditDays   Int     @default(0)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  ingredients      Ingredient[]
+  invoices         SupplierInvoice[]
+  supplierPayments SupplierPayment[]
+
+  @@map("suppliers")
+}
+
+model Ingredient {
+  id                 String              @id @default(cuid())
+  name               String
+  unit               String              // "KG"|"G"|"L"|"ML"|"UNIT"
+  onHand             Decimal             @default(0)
+  minQty             Decimal             @default(0)
+  costPerUnit        Decimal             @default(0)
+  currency           String              @default("ARS") // "ARS"|"EUR"|"USD"
+  supplierId         String?
+  isActive           Boolean             @default(true)
+  createdAt          DateTime            @default(now())
+  updatedAt          DateTime            @updatedAt
+
+  supplier               Supplier?               @relation(fields: [supplierId], references: [id])
+  productIngredients     ProductIngredient[]
+  stockMovements         StockMovement[]
+  preparationIngredients PreparationIngredient[]
+
+  @@index([isActive])
+  @@index([supplierId])
+  @@map("ingredients")
+}
+
+model Product {
+  id          String              @id @default(cuid())
+  name        String
+  sku         String?             @unique
+  salePrice   Decimal             @default(0)
+  currency    String              @default("ARS")
+  isActive    Boolean             @default(true)
+  createdAt   DateTime            @default(now())
+  updatedAt   DateTime            @updatedAt
+
+  ingredients  ProductIngredient[]
+  preparations ProductPreparation[]
+  saleItems    SaleItem[]
+  combos       ComboProduct[]
+
+  @@index([isActive])
+  @@map("products")
+}
+
+model ProductIngredient {
+  productId    String
+  ingredientId String
+  qty          Decimal
+  unit         String
+  wastagePct   Decimal  @default(0)
+
+  product    Product    @relation(fields: [productId], references: [id], onDelete: Cascade)
+  ingredient Ingredient @relation(fields: [ingredientId], references: [id])
+
+  @@id([productId, ingredientId])
+  @@map("product_ingredients")
+}
+
+model Sale {
+  id        String   @id @default(cuid())
+  date      DateTime @default(now())
+  notes     String?
+  total     Decimal  @default(0)
+  createdAt DateTime @default(now())
+
+  items          SaleItem[]
+  stockMovements StockMovement[]
+  payments       SalePayment[]
+  combos         SaleCombo[]
+
+  @@index([date])
+  @@map("sales")
+}
+
+model SaleItem {
+  saleId    String
+  productId String
+  quantity  Decimal
+
+  sale    Sale    @relation(fields: [saleId], references: [id], onDelete: Cascade)
+  product Product @relation(fields: [productId], references: [id])
+
+  @@id([saleId, productId])
+  @@index([productId])
+  @@map("sale_items")
+}
+
+model SalePayment {
+  id            String  @id @default(cuid())
+  saleId        String
+  paymentMethod String  // EFECTIVO|TRANSFERENCIA|ONLINE|DEBITO|CREDITO|RAPPI|MERCADO_ENVIOS
+  amount        Decimal
+
+  sale Sale @relation(fields: [saleId], references: [id], onDelete: Cascade)
+
+  @@map("sale_payments")
+}
+
+model StockMovement {
+  id           String   @id @default(cuid())
+  ingredientId String
+  type         String
+  delta        Decimal
+  reason       String?
+  refId        String?
+  createdAt    DateTime @default(now())
+
+  ingredient Ingredient @relation(fields: [ingredientId], references: [id])
+  sale       Sale?      @relation(fields: [refId], references: [id])
+
+  @@index([type, createdAt])
+  @@index([ingredientId, type])
+  @@map("stock_movements")
+}
+
+model IncomeEntry {
+  id            String   @id @default(cuid())
+  amount        Decimal
+  currency      String   @default("ARS")
+  date          DateTime @default(now())
+  paymentMethod String
+  description   String
+  notes         String?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  @@index([date])
+  @@map("income_entries")
+}
+
+model ExpenseCategory {
+  id       String    @id @default(cuid())
+  name     String    @unique
+  color    String    @default("#6B7280")
+
+  expenses Expense[]
+
+  @@map("expense_categories")
+}
+
+model Expense {
+  id            String   @id @default(cuid())
+  amount        Decimal
+  currency      String   @default("ARS")
+  date          DateTime @default(now())
+  description   String
+  categoryId    String?
+  cashSessionId String?  @map("cash_session_id")
+  paymentMethod String?
+  notes         String?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  category    ExpenseCategory? @relation(fields: [categoryId], references: [id], onDelete: SetNull)
+  cashSession CashSession?     @relation(fields: [cashSessionId], references: [id], onDelete: SetNull)
+
+  @@index([date])
+  @@index([categoryId])
+  @@index([cashSessionId])
+  @@map("expenses")
+}
+
+model CashSession {
+  id             String    @id @default(cuid())
+  openedAt       DateTime  @default(now())
+  closedAt       DateTime?
+  openingBalance Decimal   @default(0)
+  closingBalance Decimal?
+  notes          String?
+  createdAt      DateTime  @default(now())
+
+  expenses Expense[]
+
+  @@index([closedAt])
+  @@map("cash_sessions")
+}
+
+model SupplierInvoice {
+  id            String    @id @default(cuid())
+  supplierId    String
+  amount        Decimal
+  currency      String    @default("ARS")
+  date          DateTime  @default(now())
+  dueDate       DateTime?
+  invoiceNumber String?
+  imageUrl      String?
+  notes         String?
+  status        String    @default("PENDING") // PENDING|PARTIAL|PAID
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  supplier         Supplier          @relation(fields: [supplierId], references: [id])
+  supplierPayments SupplierPayment[]
+
+  @@index([supplierId])
+  @@index([status])
+  @@map("supplier_invoices")
+}
+
+model SupplierPayment {
+  id            String   @id @default(cuid())
+  supplierId    String
+  invoiceId     String?
+  amount        Decimal
+  currency      String   @default("ARS")
+  date          DateTime @default(now())
+  paymentMethod String
+  notes         String?
+  createdAt     DateTime @default(now())
+
+  supplier Supplier         @relation(fields: [supplierId], references: [id])
+  invoice  SupplierInvoice? @relation(fields: [invoiceId], references: [id], onDelete: SetNull)
+
+  @@index([supplierId])
+  @@index([date])
+  @@map("supplier_payments")
+}
+
+model Employee {
+  id          String    @id @default(cuid())
+  firstName   String
+  lastName    String
+  role        String?
+  hourlyRate  Decimal   @default(0)
+  phone       String?
+  email       String?
+  isActive    Boolean   @default(true)
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  timeLogs    TimeLog[]
+
+  @@index([isActive])
+  @@map("employees")
+}
+
+model TimeLog {
+  id          String    @id @default(cuid())
+  employeeId  String
+  checkIn     DateTime
+  checkOut    DateTime?
+  duration    Decimal?
+  notes       String?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  employee    Employee  @relation(fields: [employeeId], references: [id])
+
+  @@index([employeeId, checkIn])
+  @@map("time_logs")
+}
+
+// ── Preparaciones ─────────────────────────────────────────────────────────────
+
+model Preparation {
+  id        String   @id @default(cuid())
+  name      String
+  unit      String
+  yieldQty  Decimal  @default(1)
+  onHand    Decimal  @default(0)
+  notes     String?
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  ingredients     PreparationIngredient[]
+  productBOMLinks ProductPreparation[]
+  movements       PreparationMovement[]
+
+  @@index([isActive])
+  @@map("preparations")
+}
+
+model PreparationIngredient {
+  preparationId String
+  ingredientId  String
+  qty           Decimal
+  unit          String
+  wastagePct    Decimal @default(0)
+
+  preparation Preparation @relation(fields: [preparationId], references: [id], onDelete: Cascade)
+  ingredient  Ingredient  @relation(fields: [ingredientId], references: [id])
+
+  @@id([preparationId, ingredientId])
+  @@map("preparation_ingredients")
+}
+
+model PreparationMovement {
+  id            String   @id @default(cuid())
+  preparationId String
+  type          String   // PRODUCE | SALE | ADJUST
+  delta         Decimal
+  reason        String?
+  createdAt     DateTime @default(now())
+
+  preparation Preparation @relation(fields: [preparationId], references: [id])
+
+  @@index([preparationId, type])
+  @@map("preparation_movements")
+}
+
+model ProductPreparation {
+  productId     String
+  preparationId String
+  qty           Decimal
+  unit          String
+  wastagePct    Decimal @default(0)
+
+  product     Product     @relation(fields: [productId], references: [id], onDelete: Cascade)
+  preparation Preparation @relation(fields: [preparationId], references: [id])
+
+  @@id([productId, preparationId])
+  @@map("product_preparations")
+}
+
+// ── Combos ────────────────────────────────────────────────────────────────────
+
+model Combo {
+  id        String   @id @default(cuid())
+  name      String
+  sku       String?  @unique
+  salePrice Decimal  @default(0)
+  currency  String   @default("ARS")
+  isActive  Boolean  @default(true)
+  notes     String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  products   ComboProduct[]
+  saleCombos SaleCombo[]
+
+  @@index([isActive])
+  @@map("combos")
+}
+
+model ComboProduct {
+  comboId   String
+  productId String
+  quantity  Decimal @default(1)
+
+  combo   Combo   @relation(fields: [comboId], references: [id], onDelete: Cascade)
+  product Product @relation(fields: [productId], references: [id])
+
+  @@id([comboId, productId])
+  @@map("combo_products")
+}
+
+model SaleCombo {
+  id       String  @id @default(cuid())
+  saleId   String
+  comboId  String
+  quantity Decimal @default(1)
+  price    Decimal
+
+  sale  Sale  @relation(fields: [saleId], references: [id], onDelete: Cascade)
+  combo Combo @relation(fields: [comboId], references: [id])
+
+  @@index([saleId])
+  @@map("sale_combos")
+}
