@@ -431,12 +431,13 @@ model WorkSchedule {
   id         String   @id @default(cuid())
   employeeId String
   dayOfWeek  Int      // 0=Sun, 1=Mon, 2=Tue, 3=Wed, 4=Thu, 5=Fri, 6=Sat
+  shiftIndex Int      @default(0) // 0 = primer turno, 1 = segundo turno
   startTime  String   // "HH:MM"
   endTime    String   // "HH:MM"
 
   employee   Employee @relation(fields: [employeeId], references: [id], onDelete: Cascade)
 
-  @@unique([employeeId, dayOfWeek])
+  @@unique([employeeId, dayOfWeek, shiftIndex])
   @@index([employeeId])
   @@map("work_schedules")
 }

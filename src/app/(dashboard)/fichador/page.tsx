@@ -25,6 +25,13 @@ type Session = {
   employeeId?: string;
 };
 
+type ShiftEntry = { id: string; shiftIndex: number; startTime: string; endTime: string };
+
+type ScheduleInfo = {
+  schedules: ShiftEntry[];
+  isRestDay: boolean;
+};
+
 type Status = "idle" | "loading" | "success" | "error";
 
 function getMonthRange() {
@@ -34,12 +41,23 @@ function getMonthRange() {
   return { from, to };
 }
 
+const toMin = (t: string) => { const [h, m] = t.split(":").map(Number); return h * 60 + m; };
+
+/** Returns true if current time is >= earliest shift start - 1 minute */
+function canCheckInNow(schedules: ShiftEntry[], now: Date): boolean {
+  if (schedules.length === 0) return true;
+  const earliest = Math.min(...schedules.map((s) => toMin(s.startTime)));
+  const nowMin = now.getHours() * 60 + now.getMinutes();
+  return nowMin >= earliest - 1;
+}
+
 export default function FichadorPage() {
   const [session, setSession] = useState<Session | null>(null);
   const [employees, setEmployees] = useState<Employee[]>([]);
   const [selectedId, setSelectedId] = useState("");
   const [openLog, setOpenLog] = useState<TimeLog | null | undefined>(undefined);
   const [monthlyLogs, setMonthlyLogs] = useState<TimeLog[]>([]);
+  const [scheduleInfo, setScheduleInfo] = useState<ScheduleInfo | null>(null);
   const [status, setStatus] = useState<Status>("idle");
   const [message, setMessage] = useState("");
   const [now, setNow] = useState(new Date());
@@ -61,7 +79,6 @@ export default function FichadorPage() {
       const emps: Employee[] = Array.isArray(empData) ? empData : [];
       setEmployees(emps);
 
-      // Auto-select if user has a linked employee
       if (s?.employeeId) {
         setSelectedId(s.employeeId);
       }
@@ -81,6 +98,18 @@ export default function FichadorPage() {
         const logs: TimeLog[] = data.logs ?? [];
         setOpenLog(logs.length > 0 ? logs[0] : null);
       });
+  }, [selectedId]);
+
+  // Load today's schedule when employee changes
+  useEffect(() => {
+    if (!selectedId) {
+      setScheduleInfo(null);
+      return;
+    }
+    fetch(`/api/schedules/today?employeeId=${selectedId}`)
+      .then((r) => r.json())
+      .then((data) => setScheduleInfo(data))
+      .catch(() => setScheduleInfo(null));
   }, [selectedId]);
 
   // Load monthly logs when employee changes
@@ -113,7 +142,7 @@ export default function FichadorPage() {
       setStatus("error");
       setMessage(data.error ?? "Error al registrar entrada");
     }
-    setTimeout(() => setStatus("idle"), 3000);
+    setTimeout(() => setStatus("idle"), 4000);
   }
 
   async function handleCheckOut() {
@@ -134,18 +163,32 @@ export default function FichadorPage() {
       setStatus("error");
       setMessage(data.error ?? "Error al registrar salida");
     }
-    setTimeout(() => setStatus("idle"), 3000);
+    setTimeout(() => setStatus("idle"), 4000);
   }
 
   const selected = employees.find((e) => e.id === selectedId);
   const hasOpenLog = openLog !== null && openLog !== undefined;
   const isAutoSelected = !!session?.employeeId;
 
-  // ── Monthly stats ────────────────────────────────────────────────────────────
+  // Schedule enforcement
+  const isRestDay = scheduleInfo?.isRestDay ?? false;
+  const todayShifts = scheduleInfo?.schedules ?? [];
+  const checkInAllowed = !isRestDay && canCheckInNow(todayShifts, now);
+
+  // Compute earliest check-in time string for display
+  let earliestCheckIn = "";
+  if (todayShifts.length > 0 && !isRestDay) {
+    const minStart = Math.min(...todayShifts.map((s) => toMin(s.startTime)));
+    const graceMin = minStart - 1;
+    const eh = Math.floor(graceMin / 60);
+    const em = graceMin % 60;
+    earliestCheckIn = `${String(eh).padStart(2, "0")}:${String(em).padStart(2, "0")}`;
+  }
+
+  // Monthly stats
   const completedLogs = monthlyLogs.filter((l) => l.checkOut !== null && l.duration !== null);
   const completedHours = completedLogs.reduce((sum, l) => sum + Number(l.duration ?? 0), 0);
 
-  // Add in-progress time from open log (live)
   const openHours = hasOpenLog
     ? (now.getTime() - new Date(openLog!.checkIn).getTime()) / 3600000
     : 0;
@@ -153,7 +196,6 @@ export default function FichadorPage() {
   const totalHours = completedHours + openHours;
   const hourlyRate = selected ? Number(selected.hourlyRate) : 0;
   const estimatedPay = totalHours * hourlyRate;
-
   const monthLabel = format(now, "MMMM yyyy", { locale: es });
 
   return (
@@ -206,8 +248,35 @@ export default function FichadorPage() {
             </div>
           )}
 
+          {/* Schedule / rest day info */}
+          {selectedId && scheduleInfo !== null && (
+            <div>
+              {isRestDay ? (
+                <div className="rounded-lg px-4 py-3 text-sm font-medium text-center bg-rose-50 text-rose-700 border border-rose-200">
+                  Hoy es tu día de descanso
+                </div>
+              ) : todayShifts.length > 0 ? (
+                <div className="rounded-lg px-4 py-2 text-xs text-center bg-blue-50 text-blue-700 border border-blue-200 space-y-0.5">
+                  {todayShifts.map((s) => (
+                    <div key={s.shiftIndex}>
+                      {todayShifts.length > 1 && (
+                        <span className="font-semibold">Turno {s.shiftIndex + 1}: </span>
+                      )}
+                      <span className="font-bold">{s.startTime} – {s.endTime}</span>
+                    </div>
+                  ))}
+                  {!checkInAllowed && (
+                    <span className="block mt-0.5 text-blue-500">
+                      Podés fichar desde las {earliestCheckIn}
+                    </span>
+                  )}
+                </div>
+              ) : null}
+            </div>
+          )}
+
           {/* Status badge */}
-          {selectedId && openLog !== undefined && (
+          {selectedId && openLog !== undefined && !isRestDay && (
             <div
               className={`rounded-lg px-4 py-3 text-sm font-medium text-center ${
                 hasOpenLog
@@ -227,11 +296,11 @@ export default function FichadorPage() {
           )}
 
           {/* Action buttons */}
-          {selectedId && openLog !== undefined && (
+          {selectedId && openLog !== undefined && !isRestDay && (
             <div className="grid grid-cols-2 gap-3">
               <button
                 onClick={handleCheckIn}
-                disabled={hasOpenLog || status === "loading"}
+                disabled={hasOpenLog || status === "loading" || !checkInAllowed}
                 className="py-4 rounded-xl text-white text-lg font-bold transition-colors bg-emerald-600 hover:bg-emerald-700 disabled:opacity-40 disabled:cursor-not-allowed"
               >
                 ENTRADA
@@ -262,18 +331,18 @@ export default function FichadorPage() {
           )}
         </div>
 
-        {/* Monthly stats card — only when employee is selected */}
+        {/* Monthly stats card */}
         {selectedId && (
           <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-5 space-y-4">
             <div className="flex items-center justify-between">
-              <h2 className="text-sm font-semibold text-gray-700 capitalize">
-                {monthLabel}
-              </h2>
-              <span className="text-xs text-gray-400">{completedLogs.length} turno{completedLogs.length !== 1 ? "s" : ""} completado{completedLogs.length !== 1 ? "s" : ""}</span>
+              <h2 className="text-sm font-semibold text-gray-700 capitalize">{monthLabel}</h2>
+              <span className="text-xs text-gray-400">
+                {completedLogs.length} turno{completedLogs.length !== 1 ? "s" : ""} completado
+                {completedLogs.length !== 1 ? "s" : ""}
+              </span>
             </div>
 
             <div className="grid grid-cols-2 gap-3">
-              {/* Total hours */}
               <div className="bg-gray-50 rounded-xl p-3">
                 <p className="text-xs text-gray-500 mb-0.5">Horas trabajadas</p>
                 <p className="text-xl font-bold text-gray-900 tabular-nums">
@@ -285,7 +354,6 @@ export default function FichadorPage() {
                 )}
               </div>
 
-              {/* Estimated pay */}
               <div className="bg-emerald-50 rounded-xl p-3">
                 <p className="text-xs text-emerald-700 mb-0.5">Estimado a cobrar</p>
                 {hourlyRate > 0 ? (

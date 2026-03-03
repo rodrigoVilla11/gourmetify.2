@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { format } from "date-fns";
 
-// GET /api/schedules/today?employeeId=  →  today's schedule + rest day status
+// GET /api/schedules/today?employeeId=  →  today's schedules (up to 2) + rest day status
 // Used by the fichador to enforce check-in times
 export async function GET(req: NextRequest) {
   try {
@@ -16,9 +16,10 @@ export async function GET(req: NextRequest) {
     const dayOfWeek = today.getDay(); // 0=Sun, 1=Mon, ..., 6=Sat
     const dateStr = format(today, "yyyy-MM-dd");
 
-    const [schedule, restDay] = await Promise.all([
-      prisma.workSchedule.findUnique({
-        where: { employeeId_dayOfWeek: { employeeId, dayOfWeek } },
+    const [schedules, restDay] = await Promise.all([
+      prisma.workSchedule.findMany({
+        where: { employeeId, dayOfWeek },
+        orderBy: { shiftIndex: "asc" },
       }),
       prisma.restDay.findUnique({
         where: { employeeId_date: { employeeId, date: dateStr } },
@@ -26,7 +27,12 @@ export async function GET(req: NextRequest) {
     ]);
 
     return NextResponse.json({
-      schedule: schedule ? { id: schedule.id, startTime: schedule.startTime, endTime: schedule.endTime } : null,
+      schedules: schedules.map((s) => ({
+        id: s.id,
+        shiftIndex: s.shiftIndex,
+        startTime: s.startTime,
+        endTime: s.endTime,
+      })),
       isRestDay: !!restDay,
       restDayId: restDay?.id ?? null,
     });

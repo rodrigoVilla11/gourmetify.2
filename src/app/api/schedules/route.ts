@@ -12,7 +12,7 @@ export async function GET(req: NextRequest) {
       orderBy: [{ employeeId: "asc" }, { dayOfWeek: "asc" }],
     });
 
-    return NextResponse.json({ data: schedules });
+    return NextResponse.json(schedules);
   } catch {
     return NextResponse.json({ error: "Error al obtener horarios", code: "INTERNAL_ERROR" }, { status: 500 });
   }

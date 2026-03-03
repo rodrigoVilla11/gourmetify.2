@@ -55,6 +55,50 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "Empleado no encontrado o inactivo", code: "NOT_FOUND" }, { status: 404 });
     }
 
+    // Check schedule and rest day
+    const now = new Date();
+    const dayOfWeek = now.getDay();
+    const dateStr = now.toISOString().split("T")[0];
+
+    const [daySchedules, restDay] = await Promise.all([
+      prisma.workSchedule.findMany({
+        where: { employeeId, dayOfWeek },
+        orderBy: { shiftIndex: "asc" },
+      }),
+      prisma.restDay.findUnique({
+        where: { employeeId_date: { employeeId, date: dateStr } },
+      }),
+    ]);
+
+    if (restDay) {
+      return NextResponse.json(
+        { error: "Hoy es un día de descanso asignado", code: "REST_DAY" },
+        { status: 409 }
+      );
+    }
+
+    if (daySchedules.length > 0) {
+      // Allow check-in starting 1 minute before the earliest shift of the day
+      const toMin = (t: string) => { const [h, m] = t.split(":").map(Number); return h * 60 + m; };
+      const earliestStart = Math.min(...daySchedules.map((s) => toMin(s.startTime)));
+      const nowMinutes = now.getHours() * 60 + now.getMinutes();
+      const graceMinutes = earliestStart - 1;
+
+      if (nowMinutes < graceMinutes) {
+        const eh = Math.floor(graceMinutes / 60);
+        const em = graceMinutes % 60;
+        const earliest = `${String(eh).padStart(2, "0")}:${String(em).padStart(2, "0")}`;
+        const firstShift = daySchedules.find((s) => toMin(s.startTime) === earliestStart)!;
+        return NextResponse.json(
+          {
+            error: `Tu turno comienza a las ${firstShift.startTime}. Podés fichar desde las ${earliest}`,
+            code: "TOO_EARLY",
+          },
+          { status: 409 }
+        );
+      }
+    }
+
     // Check for existing open log
     const openLog = await prisma.timeLog.findFirst({
       where: { employeeId, checkOut: null },

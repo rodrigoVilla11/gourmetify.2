@@ -10,7 +10,8 @@
       "Bash(node -e \"const {z} = require\\(''zod''\\); z.string\\(\\).email\\(\\).optional\\(\\).nullable\\(\\).or\\(z.literal\\(''''\\)\\)\")",
       "Bash(npx prisma migrate dev --name combos_and_preparations)",
       "Bash(npm install bcryptjs jose)",
-      "Bash(npm install --save-dev @types/bcryptjs)"
+      "Bash(npm install --save-dev @types/bcryptjs)",
+      "Bash(npx prisma db push --skip-generate)"
     ]
   }
 }

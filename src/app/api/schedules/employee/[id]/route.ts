@@ -6,6 +6,7 @@ type Params = { params: { id: string } };
 
 const DayScheduleSchema = z.object({
   dayOfWeek: z.number().int().min(0).max(6),
+  shiftIndex: z.number().int().min(0).max(1).default(0),
   startTime: z.string().regex(/^\d{2}:\d{2}$/, "Formato HH:MM"),
   endTime: z.string().regex(/^\d{2}:\d{2}$/, "Formato HH:MM"),
 });
@@ -27,6 +28,7 @@ export async function PUT(req: NextRequest, { params }: Params) {
           data: schedules.map((s) => ({
             employeeId: params.id,
             dayOfWeek: s.dayOfWeek,
+            shiftIndex: s.shiftIndex,
             startTime: s.startTime,
             endTime: s.endTime,
           })),
