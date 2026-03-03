@@ -9,6 +9,7 @@ export async function GET(_: NextRequest, { params }: Params) {
       where: { id: params.id },
       include: {
         items: { include: { product: true } },
+        combos: { include: { combo: { select: { id: true, name: true, currency: true } } } },
         payments: true,
         stockMovements: { include: { ingredient: true }, orderBy: { createdAt: "asc" } },
       },

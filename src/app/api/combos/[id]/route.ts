@@ -59,7 +59,7 @@ export async function PUT(req: NextRequest, { params }: Params) {
         },
         include: {
           products: {
-            include: { product: { select: { id: true, name: true, salePrice: true, currency: true } } },
+            include: { product: { select: { id: true, name: true, salePrice: true, costPrice: true, currency: true } } },
           },
         },
       });

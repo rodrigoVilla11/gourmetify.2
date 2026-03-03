@@ -14,7 +14,7 @@ export async function GET(req: NextRequest) {
       },
       include: {
         products: {
-          include: { product: { select: { id: true, name: true, salePrice: true, currency: true } } },
+          include: { product: { select: { id: true, name: true, salePrice: true, costPrice: true, currency: true } } },
         },
       },
       orderBy: { name: "asc" },
@@ -45,7 +45,7 @@ export async function POST(req: NextRequest) {
         },
         include: {
           products: {
-            include: { product: { select: { id: true, name: true, salePrice: true, currency: true } } },
+            include: { product: { select: { id: true, name: true, salePrice: true, costPrice: true, currency: true } } },
           },
         },
       });

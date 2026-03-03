@@ -7,67 +7,102 @@ export async function GET(req: NextRequest) {
     const from = searchParams.get("from");
     const to = searchParams.get("to");
 
-    // Use setUTCHours to be timezone-independent on the server
     const fromDate = from ? new Date(from) : new Date();
     fromDate.setUTCHours(0, 0, 0, 0);
 
     const toDate = to ? new Date(to) : new Date();
     toDate.setUTCHours(23, 59, 59, 999);
 
-    // Step 1: aggregate consumption in DB (much faster than JS aggregation)
-    const grouped = await prisma.stockMovement.groupBy({
+    const dateFilter = { gte: fromDate, lte: toDate };
+
+    // ── Ingredient consumption (StockMovements type=SALE) ───────────────────
+    const groupedIng = await prisma.stockMovement.groupBy({
       by: ["ingredientId"],
-      where: {
-        type: "SALE",
-        createdAt: { gte: fromDate, lte: toDate },
-      },
+      where: { type: "SALE", createdAt: dateFilter },
       _sum: { delta: true },
     });
 
-    if (grouped.length === 0) {
-      return NextResponse.json({ data: [], totalEstimatedCost: 0 });
+    let ingredientRows: {
+      ingredientId: string; name: string; unit: string;
+      costPerUnit: number; currency: string;
+      totalConsumed: number; estimatedCost: number;
+    }[] = [];
+
+    if (groupedIng.length > 0) {
+      const ingredients = await prisma.ingredient.findMany({
+        where: { id: { in: groupedIng.map((g) => g.ingredientId) } },
+        select: { id: true, name: true, unit: true, costPerUnit: true, currency: true },
+      });
+      const ingMap = new Map(ingredients.map((i) => [i.id, i]));
+
+      ingredientRows = groupedIng
+        .map((g) => {
+          const ing = ingMap.get(g.ingredientId);
+          if (!ing) return null;
+          const totalConsumed = Math.abs(Number(g._sum.delta ?? 0));
+          const costPerUnit = Number(ing.costPerUnit);
+          return {
+            ingredientId: g.ingredientId,
+            name: ing.name,
+            unit: ing.unit,
+            costPerUnit,
+            currency: ing.currency,
+            totalConsumed,
+            estimatedCost: totalConsumed * costPerUnit,
+          };
+        })
+        .filter(Boolean)
+        .sort((a, b) => b!.estimatedCost - a!.estimatedCost) as typeof ingredientRows;
     }
 
-    // Step 2: fetch ingredient details for those IDs only
-    const ingredientIds = grouped.map((g) => g.ingredientId);
-    const ingredients = await prisma.ingredient.findMany({
-      where: { id: { in: ingredientIds } },
-      select: { id: true, name: true, unit: true, costPerUnit: true, currency: true },
+    // ── Preparation consumption (PreparationMovements type=SALE|CONSUME) ────
+    const groupedPrep = await prisma.preparationMovement.groupBy({
+      by: ["preparationId"],
+      where: { type: { in: ["SALE", "CONSUME"] }, createdAt: dateFilter },
+      _sum: { delta: true },
     });
 
-    const ingredientMap = new Map(ingredients.map((i) => [i.id, i]));
+    let preparationRows: {
+      preparationId: string; name: string; unit: string;
+      costPerUnit: number; totalConsumed: number; estimatedCost: number;
+    }[] = [];
 
-    const rows = grouped
-      .map((g) => {
-        const ing = ingredientMap.get(g.ingredientId);
-        if (!ing) return null;
-        const totalConsumed = Math.abs(Number(g._sum.delta ?? 0));
-        const costPerUnit = Number(ing.costPerUnit);
-        const estimatedCost = totalConsumed * costPerUnit;
-        return {
-          ingredientId: g.ingredientId,
-          name: ing.name,
-          unit: ing.unit,
-          costPerUnit,
-          currency: ing.currency,
-          totalConsumed,
-          estimatedCost,
-        };
-      })
-      .filter(Boolean)
-      .sort((a, b) => b!.estimatedCost - a!.estimatedCost) as {
-        ingredientId: string;
-        name: string;
-        unit: string;
-        costPerUnit: number;
-        currency: string;
-        totalConsumed: number;
-        estimatedCost: number;
-      }[];
+    if (groupedPrep.length > 0) {
+      const preparations = await prisma.preparation.findMany({
+        where: { id: { in: groupedPrep.map((g) => g.preparationId) } },
+        select: { id: true, name: true, unit: true, costPrice: true },
+      });
+      const prepMap = new Map(preparations.map((p) => [p.id, p]));
 
-    const totalEstimatedCost = rows.reduce((s, r) => s + r.estimatedCost, 0);
+      preparationRows = groupedPrep
+        .map((g) => {
+          const prep = prepMap.get(g.preparationId);
+          if (!prep) return null;
+          const totalConsumed = Math.abs(Number(g._sum.delta ?? 0));
+          const costPerUnit = Number(prep.costPrice);
+          return {
+            preparationId: g.preparationId,
+            name: prep.name,
+            unit: prep.unit,
+            costPerUnit,
+            totalConsumed,
+            estimatedCost: totalConsumed * costPerUnit,
+          };
+        })
+        .filter(Boolean)
+        .sort((a, b) => b!.estimatedCost - a!.estimatedCost) as typeof preparationRows;
+    }
 
-    return NextResponse.json({ data: rows, totalEstimatedCost });
+    const totalIngCost = ingredientRows.reduce((s, r) => s + r.estimatedCost, 0);
+    const totalPrepCost = preparationRows.reduce((s, r) => s + r.estimatedCost, 0);
+
+    return NextResponse.json({
+      data: ingredientRows,
+      preparations: preparationRows,
+      totalEstimatedCost: totalIngCost + totalPrepCost,
+      totalIngCost,
+      totalPrepCost,
+    });
   } catch {
     return NextResponse.json({ error: "Error interno", code: "INTERNAL_ERROR" }, { status: 500 });
   }

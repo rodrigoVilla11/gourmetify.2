@@ -227,12 +227,20 @@ export const PreparationIngredientSchema = z.object({
   wastagePct: z.coerce.number().min(0).max(100).default(0),
 });
 
+export const PreparationSubPrepSchema = z.object({
+  subPrepId: z.string().cuid("ID de preparación inválido"),
+  qty: z.coerce.number().positive("Cantidad debe ser positiva"),
+  unit: UnitSchema,
+  wastagePct: z.coerce.number().min(0).max(100).default(0),
+});
+
 export const CreatePreparationSchema = z.object({
   name: z.string().min(1, "Nombre requerido").max(100),
   unit: UnitSchema,
   yieldQty: z.coerce.number().positive("Rendimiento debe ser positivo").default(1),
   notes: z.string().optional().nullable(),
   ingredients: z.array(PreparationIngredientSchema).default([]),
+  subPreparations: z.array(PreparationSubPrepSchema).default([]),
 });
 
 export const UpdatePreparationSchema = CreatePreparationSchema.partial();

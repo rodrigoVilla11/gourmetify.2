@@ -55,6 +55,7 @@ model Product {
   name        String
   sku         String?             @unique
   salePrice   Decimal             @default(0)
+  costPrice   Decimal             @default(0)
   currency    String              @default("ARS")
   isActive    Boolean             @default(true)
   createdAt   DateTime            @default(now())
@@ -285,17 +286,34 @@ model Preparation {
   unit      String
   yieldQty  Decimal  @default(1)
   onHand    Decimal  @default(0)
+  costPrice Decimal  @default(0)
   notes     String?
   isActive  Boolean  @default(true)
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  ingredients     PreparationIngredient[]
-  productBOMLinks ProductPreparation[]
-  movements       PreparationMovement[]
+  ingredients        PreparationIngredient[]
+  subPreparations    PreparationSubPrep[]    @relation("ParentPrep")
+  usedInPreparations PreparationSubPrep[]    @relation("SubPrep")
+  productBOMLinks    ProductPreparation[]
+  movements          PreparationMovement[]
 
   @@index([isActive])
   @@map("preparations")
+}
+
+model PreparationSubPrep {
+  preparationId String
+  subPrepId     String
+  qty           Decimal
+  unit          String
+  wastagePct    Decimal @default(0)
+
+  preparation Preparation @relation("ParentPrep", fields: [preparationId], references: [id], onDelete: Cascade)
+  subPrep     Preparation @relation("SubPrep", fields: [subPrepId], references: [id])
+
+  @@id([preparationId, subPrepId])
+  @@map("preparation_sub_preps")
 }
 
 model PreparationIngredient {
