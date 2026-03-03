@@ -8,7 +8,9 @@
       "Bash(npx prisma init --datasource-provider sqlite)",
       "Bash(node -e \"const {z} = require\\(''zod''\\); console.log\\(z.string\\(\\).email\\(\\).optional\\(\\).nullable\\(\\)\\); console.log\\(''ok''\\)\")",
       "Bash(node -e \"const {z} = require\\(''zod''\\); z.string\\(\\).email\\(\\).optional\\(\\).nullable\\(\\).or\\(z.literal\\(''''\\)\\)\")",
-      "Bash(npx prisma migrate dev --name combos_and_preparations)"
+      "Bash(npx prisma migrate dev --name combos_and_preparations)",
+      "Bash(npm install bcryptjs jose)",
+      "Bash(npm install --save-dev @types/bcryptjs)"
     ]
   }
 }

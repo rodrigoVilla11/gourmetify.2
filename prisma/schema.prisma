@@ -256,7 +256,10 @@ model Employee {
   createdAt   DateTime  @default(now())
   updatedAt   DateTime  @updatedAt
 
-  timeLogs    TimeLog[]
+  timeLogs      TimeLog[]
+  user          User?
+  workSchedules WorkSchedule[]
+  restDays      RestDay[]
 
   @@index([isActive])
   @@map("employees")
@@ -402,4 +405,52 @@ model SaleCombo {
 
   @@index([saleId])
   @@map("sale_combos")
+}
+
+// ── Users / Auth ───────────────────────────────────────────────────────────────
+
+model User {
+  id         String   @id @default(cuid())
+  username   String   @unique
+  password   String   // bcryptjs hash
+  role       String   @default("EMPLEADO") // ADMIN | ENCARGADO | CAJERA | EMPLEADO
+  isActive   Boolean  @default(true)
+  employeeId String?  @unique
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  employee Employee? @relation(fields: [employeeId], references: [id], onDelete: SetNull)
+
+  @@index([username])
+  @@map("users")
+}
+
+// ── Schedules ─────────────────────────────────────────────────────────────────
+
+model WorkSchedule {
+  id         String   @id @default(cuid())
+  employeeId String
+  dayOfWeek  Int      // 0=Sun, 1=Mon, 2=Tue, 3=Wed, 4=Thu, 5=Fri, 6=Sat
+  startTime  String   // "HH:MM"
+  endTime    String   // "HH:MM"
+
+  employee   Employee @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+
+  @@unique([employeeId, dayOfWeek])
+  @@index([employeeId])
+  @@map("work_schedules")
+}
+
+model RestDay {
+  id         String   @id @default(cuid())
+  employeeId String
+  date       String   // "YYYY-MM-DD"
+  notes      String?
+
+  employee   Employee @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+
+  @@unique([employeeId, date])
+  @@index([employeeId])
+  @@index([date])
+  @@map("rest_days")
 }

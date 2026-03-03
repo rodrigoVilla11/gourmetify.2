@@ -267,3 +267,27 @@ export const CreateComboSchema = z.object({
 });
 
 export const UpdateComboSchema = CreateComboSchema.partial();
+
+// ── Users / Auth ───────────────────────────────────────────────────────────────
+
+export const UserRoleSchema = z.enum(["ADMIN", "ENCARGADO", "CAJERA", "EMPLEADO"]);
+
+export const LoginSchema = z.object({
+  username: z.string().min(1, "Usuario requerido"),
+  password: z.string().min(1, "Contraseña requerida"),
+});
+
+export const CreateUserSchema = z.object({
+  username: z.string().min(3, "Mínimo 3 caracteres").max(50),
+  password: z.string().min(6, "Mínimo 6 caracteres"),
+  role: UserRoleSchema,
+  employeeId: z.string().cuid().optional().nullable(),
+});
+
+export const UpdateUserSchema = z.object({
+  username: z.string().min(3, "Mínimo 3 caracteres").max(50).optional(),
+  password: z.string().min(6, "Mínimo 6 caracteres").optional(),
+  role: UserRoleSchema.optional(),
+  isActive: z.boolean().optional(),
+  employeeId: z.string().cuid().optional().nullable(),
+});
