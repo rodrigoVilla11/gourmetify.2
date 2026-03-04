@@ -15,6 +15,8 @@ const CAJERA_PAGE_PREFIXES = [
   "/fichador",
   "/caja-diaria",
   "/facturas-proveedores",
+  "/comandas",
+  "/sales",
 ];
 
 const EMPLEADO_PAGE_PREFIXES = ["/fichador"];
@@ -56,8 +58,22 @@ export async function middleware(req: NextRequest) {
 
   const role = session.role;
 
-  // ADMIN and ENCARGADO: full access
-  if (role === "ADMIN" || role === "ENCARGADO") {
+  // ADMIN: full access
+  if (role === "ADMIN") {
+    return NextResponse.next();
+  }
+
+  // Pages restricted to ADMIN only
+  const ADMIN_ONLY_PREFIXES = ["/resultados", "/caja"];
+  if (ADMIN_ONLY_PREFIXES.some((p) => pathname === p || pathname.startsWith(p + "/"))) {
+    if (isApiRoute) {
+      return NextResponse.json({ error: "Acceso denegado", code: "FORBIDDEN" }, { status: 403 });
+    }
+    return NextResponse.redirect(new URL("/", req.url));
+  }
+
+  // ENCARGADO: full access except ADMIN-only pages (already checked above)
+  if (role === "ENCARGADO") {
     return NextResponse.next();
   }
 
@@ -70,7 +86,7 @@ export async function middleware(req: NextRequest) {
   if (role === "CAJERA") {
     const allowed = CAJERA_PAGE_PREFIXES.some((p) => pathname.startsWith(p));
     if (!allowed) {
-      return NextResponse.redirect(new URL("/caja-diaria", req.url));
+      return NextResponse.redirect(new URL("/comandas", req.url));
     }
     return NextResponse.next();
   }

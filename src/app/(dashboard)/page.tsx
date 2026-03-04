@@ -29,6 +29,12 @@ interface DashboardData {
   totalIngredients: number;
   totalProducts: number;
   totalSalesToday: number;
+  kanbanCounts: { NUEVO: number; EN_PREPARACION: number; LISTO: number };
+  todayRevenue: number;
+}
+
+function fmt(n: number) {
+  return "$" + n.toLocaleString("es-AR", { maximumFractionDigits: 0 });
 }
 
 export default function DashboardPage() {
@@ -61,6 +67,34 @@ export default function DashboardPage() {
         <p className="text-sm text-gray-500 mt-1">
           {format(new Date(), "PPPP", { locale: es })}
         </p>
+      </div>
+
+      {/* Operaciones de hoy */}
+      <div className="bg-white rounded-xl border border-gray-200 shadow-sm p-5">
+        <div className="flex items-center justify-between mb-4">
+          <h2 className="font-semibold text-gray-900">Operaciones de hoy</h2>
+          <Link href="/comandas" className="text-sm text-emerald-600 hover:underline font-medium">
+            Ver comandas →
+          </Link>
+        </div>
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+          <div className="bg-blue-50 rounded-xl p-3 text-center">
+            <p className="text-xs text-blue-600 font-semibold uppercase tracking-wide">Nuevos</p>
+            <p className="text-3xl font-bold text-blue-700 mt-1">{data.kanbanCounts.NUEVO}</p>
+          </div>
+          <div className="bg-amber-50 rounded-xl p-3 text-center">
+            <p className="text-xs text-amber-600 font-semibold uppercase tracking-wide">En prep.</p>
+            <p className="text-3xl font-bold text-amber-700 mt-1">{data.kanbanCounts.EN_PREPARACION}</p>
+          </div>
+          <div className="bg-emerald-50 rounded-xl p-3 text-center">
+            <p className="text-xs text-emerald-600 font-semibold uppercase tracking-wide">Listos</p>
+            <p className="text-3xl font-bold text-emerald-700 mt-1">{data.kanbanCounts.LISTO}</p>
+          </div>
+          <div className="bg-gray-50 rounded-xl p-3 text-center">
+            <p className="text-xs text-gray-500 font-semibold uppercase tracking-wide">Recaudado</p>
+            <p className="text-xl font-bold text-gray-900 mt-1">{fmt(data.todayRevenue)}</p>
+          </div>
+        </div>
       </div>
 
       {/* KPI Cards */}

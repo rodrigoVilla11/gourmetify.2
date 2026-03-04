@@ -3,8 +3,6 @@ import { revalidateTag } from "next/cache";
 import { prisma } from "@/lib/prisma";
 import { CreateSaleSchema } from "@/lib/validators";
 import { ZodError } from "zod";
-import { convertUnit } from "@/utils/units";
-import type { Unit } from "@/types";
 import { buildExcel, excelResponse } from "@/utils/excel";
 import { format as fmtDate } from "date-fns";
 
@@ -38,13 +36,29 @@ export async function GET(req: NextRequest) {
       return excelResponse(buf, "ventas.xlsx");
     }
 
+    const from = searchParams.get("from");
+    const to = searchParams.get("to");
+    const isPaidParam = searchParams.get("isPaid");
+    const orderStatusParam = searchParams.get("orderStatus");
     const page = Math.max(1, parseInt(searchParams.get("page") ?? "1"));
-    const limit = Math.min(100, parseInt(searchParams.get("limit") ?? "20"));
+    const limit = Math.min(200, parseInt(searchParams.get("limit") ?? "20"));
     const skip = (page - 1) * limit;
 
+    const where = {
+      ...(from || to ? {
+        date: {
+          ...(from ? { gte: new Date(from) } : {}),
+          ...(to ? { lte: new Date(to + "T23:59:59.999Z") } : {}),
+        },
+      } : {}),
+      ...(isPaidParam !== null ? { isPaid: isPaidParam === "true" } : {}),
+      ...(orderStatusParam ? { orderStatus: { in: orderStatusParam.split(",") } } : {}),
+    };
+
     const [total, sales] = await prisma.$transaction([
-      prisma.sale.count(),
+      prisma.sale.count({ where }),
       prisma.sale.findMany({
+        where,
         skip,
         take: limit,
         select: {
@@ -52,6 +66,16 @@ export async function GET(req: NextRequest) {
           date: true,
           total: true,
           notes: true,
+          isPaid: true,
+          orderType: true,
+          orderStatus: true,
+          startedAt: true,
+          readyAt: true,
+          deliveredAt: true,
+          deliveryAddress: true,
+          customerId: true,
+          customerName: true,
+          customer: { select: { id: true, name: true, phone: true } },
           items: {
             select: {
               productId: true,
@@ -85,17 +109,15 @@ export async function GET(req: NextRequest) {
 export async function POST(req: NextRequest) {
   try {
     const body = await req.json();
-    const { date, notes, items, comboItems, payments } = CreateSaleSchema.parse(body);
+    const { date, notes, customerId, customerName, orderType, deliveryAddress, items, comboItems, payments } = CreateSaleSchema.parse(body);
+    const isPaid = !!(payments && payments.length > 0);
 
-    // ── Step 1: Load BOMs for regular products ─────────────────────────────────
+    // ── Step 1: Load products to compute total ─────────────────────────────────
     const productIds = items.map((i) => i.productId);
     const products = productIds.length > 0
       ? await prisma.product.findMany({
           where: { id: { in: productIds }, isActive: true },
-          include: {
-            ingredients: { include: { ingredient: true } },
-            preparations: { include: { preparation: true } },
-          },
+          select: { id: true, salePrice: true },
         })
       : [];
 
@@ -108,23 +130,12 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    // ── Step 1b: Load combos with their products + BOMs ────────────────────────
+    // ── Step 1b: Load combos to compute total ──────────────────────────────────
     const comboIds = (comboItems ?? []).map((c) => c.comboId);
     const combos = comboIds.length > 0
       ? await prisma.combo.findMany({
           where: { id: { in: comboIds }, isActive: true },
-          include: {
-            products: {
-              include: {
-                product: {
-                  include: {
-                    ingredients: { include: { ingredient: true } },
-                    preparations: { include: { preparation: true } },
-                  },
-                },
-              },
-            },
-          },
+          select: { id: true, salePrice: true },
         })
       : [];
 
@@ -151,200 +162,50 @@ export async function POST(req: NextRequest) {
         return sum + Number(combo.salePrice) * ci.quantity;
       }, 0);
 
-    // ── Step 3: Build ingredient deduction map ─────────────────────────────────
-    const deductionMap = new Map<string, { delta: number; name: string; unit: Unit; onHand: number }>();
-
-    function addIngredientDeduction(
-      bom: {
-        ingredientId: string;
-        qty: { toNumber?(): number } | number | string;
-        wastagePct: { toNumber?(): number } | number | string;
-        unit: string;
-        ingredient: { unit: string; name: string; onHand: { toNumber?(): number } | number | string };
-      },
-      saleQty: number
-    ) {
-      const wastageMultiplier = 1 + Number(bom.wastagePct) / 100;
-      const totalInBomUnit = Number(bom.qty) * wastageMultiplier * saleQty;
-      const ingredientBaseUnit = bom.ingredient.unit as Unit;
-      const totalInBaseUnit = convertUnit(totalInBomUnit, bom.unit as Unit, ingredientBaseUnit);
-      const existing = deductionMap.get(bom.ingredientId);
-      if (existing) {
-        existing.delta += totalInBaseUnit;
-      } else {
-        deductionMap.set(bom.ingredientId, {
-          delta: totalInBaseUnit,
-          name: bom.ingredient.name,
-          unit: ingredientBaseUnit,
-          onHand: Number(bom.ingredient.onHand),
-        });
-      }
-    }
-
-    // Regular items
-    for (const saleItem of items) {
-      const product = productMap.get(saleItem.productId)!;
-      for (const bom of product.ingredients) {
-        addIngredientDeduction(bom, saleItem.quantity);
-      }
-    }
-    // Combo items
-    for (const comboItem of (comboItems ?? [])) {
-      const combo = comboMap.get(comboItem.comboId)!;
-      for (const cp of combo.products) {
-        for (const bom of cp.product.ingredients) {
-          addIngredientDeduction(bom, Number(cp.quantity) * comboItem.quantity);
-        }
-      }
-    }
-
-    // ── Step 3b: Build preparation deduction map ───────────────────────────────
-    const prepDeductionMap = new Map<string, { delta: number; name: string; unit: Unit; onHand: number }>();
-
-    function addPrepDeduction(
-      bomPrep: {
-        preparationId: string;
-        qty: { toNumber?(): number } | number | string;
-        wastagePct: { toNumber?(): number } | number | string;
-        unit: string;
-        preparation: { unit: string; name: string; onHand: { toNumber?(): number } | number | string };
-      },
-      saleQty: number
-    ) {
-      const wastageMultiplier = 1 + Number(bomPrep.wastagePct) / 100;
-      const totalInBomUnit = Number(bomPrep.qty) * wastageMultiplier * saleQty;
-      const prepBaseUnit = bomPrep.preparation.unit as Unit;
-      const totalInBaseUnit = convertUnit(totalInBomUnit, bomPrep.unit as Unit, prepBaseUnit);
-      const existing = prepDeductionMap.get(bomPrep.preparationId);
-      if (existing) {
-        existing.delta += totalInBaseUnit;
-      } else {
-        prepDeductionMap.set(bomPrep.preparationId, {
-          delta: totalInBaseUnit,
-          name: bomPrep.preparation.name,
-          unit: prepBaseUnit,
-          onHand: Number(bomPrep.preparation.onHand),
-        });
-      }
-    }
-
-    // Regular items
-    for (const saleItem of items) {
-      const product = productMap.get(saleItem.productId)!;
-      for (const bomPrep of product.preparations) {
-        addPrepDeduction(bomPrep, saleItem.quantity);
-      }
-    }
-    // Combo items
-    for (const comboItem of (comboItems ?? [])) {
-      const combo = comboMap.get(comboItem.comboId)!;
-      for (const cp of combo.products) {
-        for (const bomPrep of cp.product.preparations) {
-          addPrepDeduction(bomPrep, Number(cp.quantity) * comboItem.quantity);
-        }
-      }
-    }
-
-    // ── Step 4: Collect stock warnings (non-blocking) ─────────────────────────
-    const warnings: {
-      ingredientId?: string;
-      preparationId?: string;
-      name: string;
-      currentStock: number;
-      required: number;
-      deficit: number;
-    }[] = [];
-
-    for (const [ingredientId, info] of Array.from(deductionMap.entries())) {
-      if (info.onHand - info.delta < 0) {
-        warnings.push({ ingredientId, name: info.name, currentStock: info.onHand, required: info.delta, deficit: info.delta - info.onHand });
-      }
-    }
-    for (const [preparationId, info] of Array.from(prepDeductionMap.entries())) {
-      if (info.onHand - info.delta < 0) {
-        warnings.push({ preparationId, name: info.name, currentStock: info.onHand, required: info.delta, deficit: info.delta - info.onHand });
-      }
-    }
-
-    // ── Step 5: Execute atomic transaction ────────────────────────────────────
-    const result = await prisma.$transaction(async (tx) => {
-      const sale = await tx.sale.create({
-        data: {
-          date: date ? new Date(date) : new Date(),
-          notes,
-          total: saleTotal,
-          items: {
-            create: items.map((i) => ({
-              productId: i.productId,
-              quantity: i.quantity,
-            })),
-          },
-          ...(comboItems && comboItems.length > 0
-            ? {
-                combos: {
-                  create: comboItems.map((ci) => ({
-                    comboId: ci.comboId,
-                    quantity: ci.quantity,
-                    price: Number(comboMap.get(ci.comboId)!.salePrice) * ci.quantity,
-                  })),
-                },
-              }
-            : {}),
-          ...(payments && payments.length > 0
-            ? {
-                payments: {
-                  create: payments.map((p) => ({
-                    paymentMethod: p.paymentMethod,
-                    amount: p.amount,
-                  })),
-                },
-              }
-            : {}),
+    // ── Step 3: Create sale (NO stock deduction — happens on EN_PREPARACION) ───
+    const sale = await prisma.sale.create({
+      data: {
+        date: date ? new Date(date) : new Date(),
+        notes,
+        total: saleTotal,
+        customerId: customerId ?? null,
+        customerName: customerName ?? null,
+        orderType,
+        orderStatus: "NUEVO",
+        isPaid,
+        deliveryAddress: deliveryAddress ?? null,
+        items: {
+          create: items.map((i) => ({
+            productId: i.productId,
+            quantity: i.quantity,
+          })),
         },
-      });
-
-      const movements = [];
-
-      for (const [ingredientId, info] of Array.from(deductionMap.entries())) {
-        await tx.ingredient.update({
-          where: { id: ingredientId },
-          data: { onHand: { decrement: info.delta } },
-        });
-        const movement = await tx.stockMovement.create({
-          data: {
-            ingredientId,
-            type: "SALE",
-            delta: -info.delta,
-            reason: `Venta ${sale.id}`,
-            refId: sale.id,
-          },
-        });
-        movements.push(movement);
-      }
-
-      for (const [preparationId, info] of Array.from(prepDeductionMap.entries())) {
-        await tx.preparation.update({
-          where: { id: preparationId },
-          data: { onHand: { decrement: info.delta } },
-        });
-        await tx.preparationMovement.create({
-          data: {
-            preparationId,
-            type: "SALE",
-            delta: -info.delta,
-            reason: `Venta ${sale.id}`,
-          },
-        });
-      }
-
-      return { sale, movements };
+        ...(comboItems && comboItems.length > 0
+          ? {
+              combos: {
+                create: comboItems.map((ci) => ({
+                  comboId: ci.comboId,
+                  quantity: ci.quantity,
+                  price: Number(comboMap.get(ci.comboId)!.salePrice) * ci.quantity,
+                })),
+              },
+            }
+          : {}),
+        ...(payments && payments.length > 0
+          ? {
+              payments: {
+                create: payments.map((p) => ({
+                  paymentMethod: p.paymentMethod,
+                  amount: p.amount,
+                })),
+              },
+            }
+          : {}),
+      },
     });
 
     revalidateTag("dashboard");
-    return NextResponse.json(
-      { sale: result.sale, movements: result.movements, warnings },
-      { status: 201 }
-    );
+    return NextResponse.json({ sale }, { status: 201 });
   } catch (e) {
     if (e instanceof ZodError) {
       return NextResponse.json(

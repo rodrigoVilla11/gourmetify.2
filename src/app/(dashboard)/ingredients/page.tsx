@@ -13,6 +13,7 @@ import { unitLabel, formatQty } from "@/utils/units";
 import { formatCurrency } from "@/utils/currency";
 import { ImportButton } from "@/components/ui/ImportButton";
 import { downloadExcel } from "@/utils/excel";
+import { MovementPanel } from "@/components/ingredients/MovementPanel";
 
 interface Supplier { id: string; name: string }
 interface Ingredient {
@@ -38,6 +39,12 @@ interface IngredientForm {
   supplierId?: string;
 }
 
+interface Prediction {
+  ingredientId: string;
+  avgDailyConsumption: number;
+  daysRemaining: number | null;
+}
+
 export default function IngredientsPage() {
   const [ingredients, setIngredients] = useState<Ingredient[]>([]);
   const [suppliers, setSuppliers] = useState<Supplier[]>([]);
@@ -48,6 +55,8 @@ export default function IngredientsPage() {
   const [deletingId, setDeletingId] = useState<string | null>(null);
   const [isDeleting, setIsDeleting] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [predictions, setPredictions] = useState<Map<string, Prediction>>(new Map());
+  const [selectedIngredient, setSelectedIngredient] = useState<Ingredient | null>(null);
 
   const { register, handleSubmit, reset, watch, formState: { errors } } = useForm<IngredientForm>({
     defaultValues: { unit: "KG", currency: "ARS", onHand: 0, minQty: 0, costPerUnit: 0 },
@@ -55,14 +64,17 @@ export default function IngredientsPage() {
 
   const fetchData = useCallback(async () => {
     setLoading(true);
-    const [ingRes, supRes] = await Promise.all([
+    const [ingRes, supRes, predRes] = await Promise.all([
       fetch("/api/ingredients"),
       fetch("/api/suppliers"),
+      fetch("/api/ingredients/predictions"),
     ]);
     const { data } = await ingRes.json();
     const supData = await supRes.json();
+    const predData: Prediction[] = await predRes.json();
     setIngredients(data);
     setSuppliers(supData);
+    setPredictions(new Map(predData.map((p) => [p.ingredientId, p])));
     setLoading(false);
   }, []);
 
@@ -129,7 +141,12 @@ export default function IngredientsPage() {
       header: "Nombre",
       render: (i) => (
         <div className="flex items-center gap-2">
-          <span className="font-medium">{i.name}</span>
+          <button
+            className="font-medium text-left hover:text-emerald-600 transition-colors"
+            onClick={() => setSelectedIngredient(i)}
+          >
+            {i.name}
+          </button>
           {i.isLow && <Badge variant="warning">Stock bajo</Badge>}
           {!i.isActive && <Badge variant="neutral">Inactivo</Badge>}
         </div>
@@ -153,6 +170,20 @@ export default function IngredientsPage() {
         parseFloat(i.minQty) > 0
           ? formatQty(i.minQty, i.unit)
           : <span className="text-gray-400">—</span>,
+    },
+    {
+      key: "daysRemaining",
+      header: "Duración est.",
+      className: "hidden lg:table-cell",
+      render: (i) => {
+        const pred = predictions.get(i.id);
+        if (!pred || pred.daysRemaining === null) {
+          return <span className="text-gray-300">—</span>;
+        }
+        const d = Math.round(pred.daysRemaining);
+        const variant = d < 3 ? "danger" : d < 7 ? "warning" : "success";
+        return <Badge variant={variant}>{d}d</Badge>;
+      },
     },
     {
       key: "cost",
@@ -294,6 +325,24 @@ export default function IngredientsPage() {
         confirmLabel="Desactivar"
         isLoading={isDeleting}
       />
+
+      {selectedIngredient && (
+        <>
+          <div
+            className="fixed inset-0 bg-black/20 z-30"
+            onClick={() => setSelectedIngredient(null)}
+          />
+          <MovementPanel
+            ingredientId={selectedIngredient.id}
+            ingredientName={selectedIngredient.name}
+            unit={selectedIngredient.unit}
+            onHand={selectedIngredient.onHand}
+            daysRemaining={predictions.get(selectedIngredient.id)?.daysRemaining ?? null}
+            avgDailyConsumption={predictions.get(selectedIngredient.id)?.avgDailyConsumption ?? 0}
+            onClose={() => setSelectedIngredient(null)}
+          />
+        </>
+      )}
     </div>
   );
 }

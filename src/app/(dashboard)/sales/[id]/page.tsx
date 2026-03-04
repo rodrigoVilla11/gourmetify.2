@@ -18,6 +18,11 @@ interface SaleDetail {
   date: string;
   total: string;
   notes: string | null;
+  orderType: string;
+  deliveryAddress: string | null;
+  customerId: string | null;
+  customerName: string | null;
+  customer: { id: string; name: string; phone: string | null; email: string | null; address: string | null } | null;
   items: { productId: string; quantity: string; product: { name: string; salePrice: string } }[];
   combos: { id: string; comboId: string; quantity: string; price: string; combo: { id: string; name: string } }[];
   payments: { id: string; paymentMethod: string; amount: string }[];
@@ -69,6 +74,50 @@ export default function SaleDetailPage() {
           <Button variant="secondary">← Volver</Button>
         </Link>
       </div>
+
+      {/* Customer card */}
+      {(sale.customer || sale.customerName) && (
+        <Card title="Cliente">
+          <div className="flex items-center gap-3">
+            <div className="w-9 h-9 rounded-full bg-emerald-100 flex items-center justify-center shrink-0">
+              <svg className="h-5 w-5 text-emerald-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5.121 17.804A13.937 13.937 0 0112 16c2.5 0 4.847.655 6.879 1.804M15 10a3 3 0 11-6 0 3 3 0 016 0z" />
+              </svg>
+            </div>
+            <div className="flex-1 min-w-0">
+              <p className="font-semibold text-gray-900">
+                {sale.customer?.name ?? sale.customerName}
+              </p>
+              {sale.customer?.phone && (
+                <p className="text-sm text-gray-500">{sale.customer.phone}</p>
+              )}
+              {sale.customer?.email && (
+                <p className="text-xs text-gray-400">{sale.customer.email}</p>
+              )}
+              {sale.customer?.address && (
+                <p className="text-xs text-gray-400">📍 {sale.customer.address}</p>
+              )}
+              {!sale.customer && sale.customerName && (
+                <p className="text-xs text-gray-400">Nombre libre (sin cuenta)</p>
+              )}
+            </div>
+            {sale.customer && (
+              <Link href="/clientes">
+                <Button size="sm" variant="ghost">Ver perfil</Button>
+              </Link>
+            )}
+          </div>
+        </Card>
+      )}
+
+      {sale.deliveryAddress && (
+        <Card title="Dirección de entrega">
+          <div className="flex items-center gap-2">
+            <span className="text-lg">📍</span>
+            <p className="text-sm text-gray-700">{sale.deliveryAddress}</p>
+          </div>
+        </Card>
+      )}
 
       <Card title="Productos vendidos">
         <div className="divide-y divide-gray-100">

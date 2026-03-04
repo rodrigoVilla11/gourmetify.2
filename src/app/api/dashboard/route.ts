@@ -18,6 +18,8 @@ const getDashboardData = unstable_cache(
       totalProducts,
       todaySales,
       topItemGroups,
+      kanbanGroups,
+      todayRevenueAgg,
     ] = await Promise.all([
       prisma.ingredient.count({ where: { isActive: true } }),
 
@@ -63,6 +65,19 @@ const getDashboardData = unstable_cache(
         orderBy: { _sum: { quantity: "desc" } },
         take: 5,
       }),
+
+      // Active kanban orders by status
+      prisma.sale.groupBy({
+        by: ["orderStatus"],
+        where: { orderStatus: { in: ["NUEVO", "EN_PREPARACION", "LISTO"] } },
+        _count: { id: true },
+      }),
+
+      // Today's total revenue (non-cancelled)
+      prisma.sale.aggregate({
+        _sum: { total: true },
+        where: { date: { gte: today }, orderStatus: { not: "CANCELADO" } },
+      }),
     ]);
 
     // Can't compare two columns in Prisma where, so filter in JS (only minQty>0 rows loaded)
@@ -89,6 +104,9 @@ const getDashboardData = unstable_cache(
       })
       .filter((x): x is NonNullable<typeof x> => x !== null);
 
+    const kanbanCounts = { NUEVO: 0, EN_PREPARACION: 0, LISTO: 0 } as Record<string, number>;
+    for (const g of kanbanGroups) kanbanCounts[g.orderStatus] = g._count.id;
+
     return {
       lowStockIngredients,
       recentSales,
@@ -96,6 +114,8 @@ const getDashboardData = unstable_cache(
       totalIngredients,
       totalProducts,
       totalSalesToday: todaySales,
+      kanbanCounts,
+      todayRevenue: Number(todayRevenueAgg._sum.total ?? 0),
     };
   },
   ["dashboard"],

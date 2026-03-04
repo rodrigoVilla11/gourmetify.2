@@ -14,10 +14,18 @@ export async function GET(req: NextRequest) {
     const { searchParams } = new URL(req.url);
     const supplierId = searchParams.get("supplierId");
     const invoiceId = searchParams.get("invoiceId");
+    const from = searchParams.get("from");
+    const to = searchParams.get("to");
 
     const where = {
       ...(supplierId ? { supplierId } : {}),
       ...(invoiceId ? { invoiceId } : {}),
+      ...(from || to ? {
+        date: {
+          ...(from ? { gte: new Date(from) } : {}),
+          ...(to ? { lte: new Date(to + "T23:59:59.999Z") } : {}),
+        },
+      } : {}),
     };
 
     const payments = await prisma.supplierPayment.findMany({

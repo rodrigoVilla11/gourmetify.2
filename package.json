@@ -14,6 +14,7 @@
     "db:reset": "prisma migrate reset"
   },
   "dependencies": {
+    "@hello-pangea/dnd": "^18.0.1",
     "@hookform/resolvers": "^5.2.2",
     "@prisma/client": "^5.22.0",
     "bcryptjs": "^3.0.3",
@@ -25,6 +26,7 @@
     "react": "^18",
     "react-dom": "^18",
     "react-hook-form": "^7.71.2",
+    "recharts": "^3.7.0",
     "tailwind-merge": "^3.5.0",
     "xlsx": "^0.18.5",
     "zod": "^4.3.6"

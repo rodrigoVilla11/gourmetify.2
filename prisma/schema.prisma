@@ -50,6 +50,16 @@ model Ingredient {
   @@map("ingredients")
 }
 
+model ProductCategory {
+  id       String    @id @default(cuid())
+  name     String    @unique
+  color    String    @default("#6B7280")
+
+  products Product[]
+
+  @@map("product_categories")
+}
+
 model Product {
   id          String              @id @default(cuid())
   name        String
@@ -57,16 +67,19 @@ model Product {
   salePrice   Decimal             @default(0)
   costPrice   Decimal             @default(0)
   currency    String              @default("ARS")
+  categoryId  String?             @map("category_id")
   isActive    Boolean             @default(true)
   createdAt   DateTime            @default(now())
   updatedAt   DateTime            @updatedAt
 
+  category     ProductCategory?    @relation(fields: [categoryId], references: [id], onDelete: SetNull)
   ingredients  ProductIngredient[]
   preparations ProductPreparation[]
   saleItems    SaleItem[]
   combos       ComboProduct[]
 
   @@index([isActive])
+  @@index([categoryId])
   @@map("products")
 }
 
@@ -84,19 +97,46 @@ model ProductIngredient {
   @@map("product_ingredients")
 }
 
-model Sale {
+model Customer {
   id        String   @id @default(cuid())
-  date      DateTime @default(now())
+  name      String
+  phone     String?  @unique
+  email     String?
+  address   String?
   notes     String?
-  total     Decimal  @default(0)
   createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
+  sales Sale[]
+
+  @@index([phone])
+  @@map("customers")
+}
+
+model Sale {
+  id           String   @id @default(cuid())
+  date         DateTime @default(now())
+  notes        String?
+  total        Decimal  @default(0)
+  customerId   String?  @map("customer_id")
+  customerName String?  @map("customer_name")
+  orderType       String    @default("SALON")  @map("order_type")   // SALON|TAKEAWAY|DELIVERY
+  isPaid          Boolean   @default(false)    @map("is_paid")
+  deliveryAddress String?   @map("delivery_address")
+  orderStatus     String    @default("NUEVO")  @map("order_status") // NUEVO|EN_PREPARACION|LISTO|ENTREGADO|CANCELADO
+  startedAt       DateTime? @map("started_at")
+  readyAt         DateTime? @map("ready_at")
+  deliveredAt     DateTime? @map("delivered_at")
+  createdAt       DateTime  @default(now())
+
+  customer       Customer?       @relation(fields: [customerId], references: [id], onDelete: SetNull)
   items          SaleItem[]
   stockMovements StockMovement[]
   payments       SalePayment[]
   combos         SaleCombo[]
 
   @@index([date])
+  @@index([customerId])
   @@map("sales")
 }
 

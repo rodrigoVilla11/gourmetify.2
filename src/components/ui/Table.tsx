@@ -13,6 +13,7 @@ interface TableProps<T> {
   emptyMessage?: string;
   isLoading?: boolean;
   rowKey: (row: T) => string;
+  rowClassName?: (row: T) => string;
 }
 
 export function Table<T>({
@@ -21,6 +22,7 @@ export function Table<T>({
   emptyMessage = "No hay datos",
   isLoading,
   rowKey,
+  rowClassName,
 }: TableProps<T>) {
   return (
     <div className="overflow-x-auto">
@@ -57,7 +59,7 @@ export function Table<T>({
             </tr>
           ) : (
             data.map((row) => (
-              <tr key={rowKey(row)} className="hover:bg-gray-50 transition-colors">
+              <tr key={rowKey(row)} className={`hover:bg-gray-50 transition-colors ${rowClassName?.(row) ?? ""}`}>
                 {columns.map((col) => (
                   <td
                     key={col.key}

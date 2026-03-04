@@ -36,6 +36,7 @@ export default function HorariosPage() {
   const [schedules, setSchedules] = useState<WorkSchedule[]>([]);
   const [restDays, setRestDays] = useState<RestDay[]>([]);
   const [allLogs, setAllLogs] = useState<TimeLogRaw[]>([]);
+  const [role, setRole] = useState<string>("");
 
   // editSchedule[`${dow}-${shiftIndex}`] = { startTime, endTime }
   const [editSchedule, setEditSchedule] = useState<Record<string, { startTime: string; endTime: string }>>({});
@@ -43,15 +44,17 @@ export default function HorariosPage() {
   const [scheduleMsg, setScheduleMsg] = useState("");
   const [togglingDate, setTogglingDate] = useState<string | null>(null);
 
-  // Load employees
+  // Load session + employees
   useEffect(() => {
-    fetch("/api/employees?isActive=true")
-      .then((r) => r.json())
-      .then((data) => {
-        const emps: Employee[] = Array.isArray(data) ? data : [];
-        setEmployees(emps);
-        if (emps.length > 0) setSelectedEmpId(emps[0].id);
-      });
+    Promise.all([
+      fetch("/api/auth/me").then((r) => r.json()),
+      fetch("/api/employees?isActive=true").then((r) => r.json()),
+    ]).then(([sessionData, empData]) => {
+      if (sessionData?.role) setRole(sessionData.role);
+      const emps: Employee[] = Array.isArray(empData) ? empData : [];
+      setEmployees(emps);
+      if (emps.length > 0) setSelectedEmpId(emps[0].id);
+    });
   }, []);
 
   const fetchSchedules = useCallback(() => {
@@ -455,155 +458,160 @@ export default function HorariosPage() {
         </div>
       </div>
 
-      {/* Table 1: Scheduled hours → estimated pay */}
-      <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-5 space-y-4">
-        <div>
-          <h2 className="text-sm font-semibold text-gray-700">Estimado según horario programado</h2>
-          <p className="text-xs text-gray-400 mt-0.5 capitalize">
-            {monthLabel} — basado en horarios asignados y días de descanso
-          </p>
-        </div>
+      {/* Pay tables — ADMIN only */}
+      {role === "ADMIN" && (
+        <>
+          {/* Table 1: Scheduled hours → estimated pay */}
+          <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-5 space-y-4">
+            <div>
+              <h2 className="text-sm font-semibold text-gray-700">Estimado según horario programado</h2>
+              <p className="text-xs text-gray-400 mt-0.5 capitalize">
+                {monthLabel} — basado en horarios asignados y días de descanso
+              </p>
+            </div>
 
-        <div className="overflow-x-auto">
-          <table className="w-full text-sm">
-            <thead>
-              <tr className="border-b border-gray-100">
-                <th className="text-left text-xs font-semibold text-gray-500 pb-2 pr-4">Empleado</th>
-                <th className="text-left text-xs font-semibold text-gray-500 pb-2 pr-4">Rol</th>
-                <th className="text-right text-xs font-semibold text-gray-500 pb-2 pr-4">Tarifa</th>
-                <th className="text-right text-xs font-semibold text-gray-500 pb-2 pr-4">Horas programadas</th>
-                <th className="text-right text-xs font-semibold text-gray-500 pb-2">Estimado a cobrar</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-gray-50">
-              {payData.map(({ emp, rate, scheduledHours, scheduledPay }) => (
-                <tr key={emp.id} className="hover:bg-gray-50 transition-colors">
-                  <td className="py-2.5 pr-4 font-medium text-gray-800">
-                    {emp.firstName} {emp.lastName}
-                  </td>
-                  <td className="py-2.5 pr-4 text-gray-500 text-xs">{emp.role ?? "—"}</td>
-                  <td className="py-2.5 pr-4 text-right text-gray-600 tabular-nums">
-                    {rate > 0 ? `$${rate.toLocaleString("es-AR")}/hs` : <span className="text-gray-300">—</span>}
-                  </td>
-                  <td className="py-2.5 pr-4 text-right tabular-nums text-gray-700 font-medium">
-                    {scheduledHours > 0 ? `${scheduledHours.toFixed(1)} hs` : <span className="text-gray-300">—</span>}
-                  </td>
-                  <td className="py-2.5 text-right tabular-nums">
-                    {rate > 0 && scheduledHours > 0 ? (
-                      <span className="font-bold text-blue-700">
-                        ${scheduledPay.toLocaleString("es-AR", { maximumFractionDigits: 0 })}
-                      </span>
-                    ) : (
-                      <span className="text-gray-300">—</span>
-                    )}
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-            {payData.some((d) => d.scheduledPay > 0) && (
-              <tfoot>
-                <tr className="border-t border-gray-200">
-                  <td colSpan={4} className="pt-2.5 text-xs font-semibold text-gray-500 text-right pr-4">
-                    Total estimado
-                  </td>
-                  <td className="pt-2.5 text-right">
-                    <span className="text-base font-bold text-blue-700 tabular-nums">
-                      ${payData
-                        .reduce((sum, d) => sum + d.scheduledPay, 0)
-                        .toLocaleString("es-AR", { maximumFractionDigits: 0 })}
-                    </span>
-                  </td>
-                </tr>
-              </tfoot>
-            )}
-          </table>
-          {payData.every((d) => d.scheduledHours === 0) && (
-            <p className="text-center text-sm text-gray-400 py-4">Sin horarios asignados este mes</p>
-          )}
-        </div>
-      </div>
-
-      {/* Table 2: Real worked hours */}
-      <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-5 space-y-4">
-        <div>
-          <h2 className="text-sm font-semibold text-gray-700">Horas reales trabajadas</h2>
-          <p className="text-xs text-gray-400 mt-0.5 capitalize">
-            {monthLabel} — basado en fichajes completados
-          </p>
-        </div>
-
-        <div className="overflow-x-auto">
-          <table className="w-full text-sm">
-            <thead>
-              <tr className="border-b border-gray-100">
-                <th className="text-left text-xs font-semibold text-gray-500 pb-2 pr-4">Empleado</th>
-                <th className="text-left text-xs font-semibold text-gray-500 pb-2 pr-4">Rol</th>
-                <th className="text-right text-xs font-semibold text-gray-500 pb-2 pr-4">Tarifa</th>
-                <th className="text-right text-xs font-semibold text-gray-500 pb-2 pr-4">Horas trabajadas</th>
-                <th className="text-right text-xs font-semibold text-gray-500 pb-2 pr-4">A cobrar</th>
-                <th className="text-right text-xs font-semibold text-gray-500 pb-2">vs. programado</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-gray-50">
-              {payData.map(({ emp, rate, scheduledHours, workedHours, workedPay }) => {
-                const diff = workedHours - scheduledHours;
-                return (
-                  <tr key={emp.id} className="hover:bg-gray-50 transition-colors">
-                    <td className="py-2.5 pr-4 font-medium text-gray-800">
-                      {emp.firstName} {emp.lastName}
-                    </td>
-                    <td className="py-2.5 pr-4 text-gray-500 text-xs">{emp.role ?? "—"}</td>
-                    <td className="py-2.5 pr-4 text-right text-gray-600 tabular-nums">
-                      {rate > 0 ? `$${rate.toLocaleString("es-AR")}/hs` : <span className="text-gray-300">—</span>}
-                    </td>
-                    <td className="py-2.5 pr-4 text-right tabular-nums text-gray-700 font-medium">
-                      {workedHours > 0 ? `${workedHours.toFixed(1)} hs` : <span className="text-gray-300">—</span>}
-                    </td>
-                    <td className="py-2.5 pr-4 text-right tabular-nums">
-                      {rate > 0 && workedHours > 0 ? (
-                        <span className="font-bold text-emerald-700">
-                          ${workedPay.toLocaleString("es-AR", { maximumFractionDigits: 0 })}
-                        </span>
-                      ) : (
-                        <span className="text-gray-300">—</span>
-                      )}
-                    </td>
-                    <td className="py-2.5 text-right tabular-nums">
-                      {scheduledHours > 0 && workedHours > 0 ? (
-                        <span className={`text-xs font-semibold ${diff >= 0 ? "text-emerald-600" : "text-rose-600"}`}>
-                          {diff >= 0 ? "+" : ""}{diff.toFixed(1)} hs
-                        </span>
-                      ) : (
-                        <span className="text-gray-300">—</span>
-                      )}
-                    </td>
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="border-b border-gray-100">
+                    <th className="text-left text-xs font-semibold text-gray-500 pb-2 pr-4">Empleado</th>
+                    <th className="text-left text-xs font-semibold text-gray-500 pb-2 pr-4">Rol</th>
+                    <th className="text-right text-xs font-semibold text-gray-500 pb-2 pr-4">Tarifa</th>
+                    <th className="text-right text-xs font-semibold text-gray-500 pb-2 pr-4">Horas programadas</th>
+                    <th className="text-right text-xs font-semibold text-gray-500 pb-2">Estimado a cobrar</th>
                   </tr>
-                );
-              })}
-            </tbody>
-            {payData.some((d) => d.workedPay > 0) && (
-              <tfoot>
-                <tr className="border-t border-gray-200">
-                  <td colSpan={4} className="pt-2.5 text-xs font-semibold text-gray-500 text-right pr-4">
-                    Total a pagar
-                  </td>
-                  <td className="pt-2.5 text-right">
-                    <span className="text-base font-bold text-emerald-700 tabular-nums">
-                      ${payData
-                        .reduce((sum, d) => sum + d.workedPay, 0)
-                        .toLocaleString("es-AR", { maximumFractionDigits: 0 })}
-                    </span>
-                  </td>
-                  <td />
-                </tr>
-              </tfoot>
-            )}
-          </table>
-          {payData.every((d) => d.workedHours === 0) && (
-            <p className="text-center text-sm text-gray-400 py-4">Sin fichajes completados este mes</p>
-          )}
-        </div>
-      </div>
+                </thead>
+                <tbody className="divide-y divide-gray-50">
+                  {payData.map(({ emp, rate, scheduledHours, scheduledPay }) => (
+                    <tr key={emp.id} className="hover:bg-gray-50 transition-colors">
+                      <td className="py-2.5 pr-4 font-medium text-gray-800">
+                        {emp.firstName} {emp.lastName}
+                      </td>
+                      <td className="py-2.5 pr-4 text-gray-500 text-xs">{emp.role ?? "—"}</td>
+                      <td className="py-2.5 pr-4 text-right text-gray-600 tabular-nums">
+                        {rate > 0 ? `$${rate.toLocaleString("es-AR")}/hs` : <span className="text-gray-300">—</span>}
+                      </td>
+                      <td className="py-2.5 pr-4 text-right tabular-nums text-gray-700 font-medium">
+                        {scheduledHours > 0 ? `${scheduledHours.toFixed(1)} hs` : <span className="text-gray-300">—</span>}
+                      </td>
+                      <td className="py-2.5 text-right tabular-nums">
+                        {rate > 0 && scheduledHours > 0 ? (
+                          <span className="font-bold text-blue-700">
+                            ${scheduledPay.toLocaleString("es-AR", { maximumFractionDigits: 0 })}
+                          </span>
+                        ) : (
+                          <span className="text-gray-300">—</span>
+                        )}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+                {payData.some((d) => d.scheduledPay > 0) && (
+                  <tfoot>
+                    <tr className="border-t border-gray-200">
+                      <td colSpan={4} className="pt-2.5 text-xs font-semibold text-gray-500 text-right pr-4">
+                        Total estimado
+                      </td>
+                      <td className="pt-2.5 text-right">
+                        <span className="text-base font-bold text-blue-700 tabular-nums">
+                          ${payData
+                            .reduce((sum, d) => sum + d.scheduledPay, 0)
+                            .toLocaleString("es-AR", { maximumFractionDigits: 0 })}
+                        </span>
+                      </td>
+                    </tr>
+                  </tfoot>
+                )}
+              </table>
+              {payData.every((d) => d.scheduledHours === 0) && (
+                <p className="text-center text-sm text-gray-400 py-4">Sin horarios asignados este mes</p>
+              )}
+            </div>
+          </div>
+
+          {/* Table 2: Real worked hours */}
+          <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-5 space-y-4">
+            <div>
+              <h2 className="text-sm font-semibold text-gray-700">Horas reales trabajadas</h2>
+              <p className="text-xs text-gray-400 mt-0.5 capitalize">
+                {monthLabel} — basado en fichajes completados
+              </p>
+            </div>
+
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="border-b border-gray-100">
+                    <th className="text-left text-xs font-semibold text-gray-500 pb-2 pr-4">Empleado</th>
+                    <th className="text-left text-xs font-semibold text-gray-500 pb-2 pr-4">Rol</th>
+                    <th className="text-right text-xs font-semibold text-gray-500 pb-2 pr-4">Tarifa</th>
+                    <th className="text-right text-xs font-semibold text-gray-500 pb-2 pr-4">Horas trabajadas</th>
+                    <th className="text-right text-xs font-semibold text-gray-500 pb-2 pr-4">A cobrar</th>
+                    <th className="text-right text-xs font-semibold text-gray-500 pb-2">vs. programado</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-gray-50">
+                  {payData.map(({ emp, rate, scheduledHours, workedHours, workedPay }) => {
+                    const diff = workedHours - scheduledHours;
+                    return (
+                      <tr key={emp.id} className="hover:bg-gray-50 transition-colors">
+                        <td className="py-2.5 pr-4 font-medium text-gray-800">
+                          {emp.firstName} {emp.lastName}
+                        </td>
+                        <td className="py-2.5 pr-4 text-gray-500 text-xs">{emp.role ?? "—"}</td>
+                        <td className="py-2.5 pr-4 text-right text-gray-600 tabular-nums">
+                          {rate > 0 ? `$${rate.toLocaleString("es-AR")}/hs` : <span className="text-gray-300">—</span>}
+                        </td>
+                        <td className="py-2.5 pr-4 text-right tabular-nums text-gray-700 font-medium">
+                          {workedHours > 0 ? `${workedHours.toFixed(1)} hs` : <span className="text-gray-300">—</span>}
+                        </td>
+                        <td className="py-2.5 pr-4 text-right tabular-nums">
+                          {rate > 0 && workedHours > 0 ? (
+                            <span className="font-bold text-emerald-700">
+                              ${workedPay.toLocaleString("es-AR", { maximumFractionDigits: 0 })}
+                            </span>
+                          ) : (
+                            <span className="text-gray-300">—</span>
+                          )}
+                        </td>
+                        <td className="py-2.5 text-right tabular-nums">
+                          {scheduledHours > 0 && workedHours > 0 ? (
+                            <span className={`text-xs font-semibold ${diff >= 0 ? "text-emerald-600" : "text-rose-600"}`}>
+                              {diff >= 0 ? "+" : ""}{diff.toFixed(1)} hs
+                            </span>
+                          ) : (
+                            <span className="text-gray-300">—</span>
+                          )}
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+                {payData.some((d) => d.workedPay > 0) && (
+                  <tfoot>
+                    <tr className="border-t border-gray-200">
+                      <td colSpan={4} className="pt-2.5 text-xs font-semibold text-gray-500 text-right pr-4">
+                        Total a pagar
+                      </td>
+                      <td className="pt-2.5 text-right">
+                        <span className="text-base font-bold text-emerald-700 tabular-nums">
+                          ${payData
+                            .reduce((sum, d) => sum + d.workedPay, 0)
+                            .toLocaleString("es-AR", { maximumFractionDigits: 0 })}
+                        </span>
+                      </td>
+                      <td />
+                    </tr>
+                  </tfoot>
+                )}
+              </table>
+              {payData.every((d) => d.workedHours === 0) && (
+                <p className="text-center text-sm text-gray-400 py-4">Sin fichajes completados este mes</p>
+              )}
+            </div>
+          </div>
+        </>
+      )}
     </div>
   );
 }

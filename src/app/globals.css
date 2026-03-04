@@ -1,3 +1,11 @@
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
+
+/* ── Print styles ──────────────────────────────────────────────────────────── */
+@media print {
+  .no-print { display: none !important; }
+  body > * { display: none !important; }
+  #print-portal { display: block !important; }
+}
+#print-portal { display: none; }

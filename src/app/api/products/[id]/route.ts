@@ -44,6 +44,7 @@ async function computeProductCost(
 }
 
 const PRODUCT_INCLUDE = {
+  category: { select: { id: true, name: true, color: true } },
   ingredients: { include: { ingredient: { select: { id: true, name: true, unit: true } } } },
   preparations: { include: { preparation: { select: { id: true, name: true, unit: true } } } },
 };

@@ -8,6 +8,7 @@ export async function GET(_: NextRequest, { params }: Params) {
     const sale = await prisma.sale.findUnique({
       where: { id: params.id },
       include: {
+        customer: { select: { id: true, name: true, phone: true, email: true, address: true } },
         items: { include: { product: true } },
         combos: { include: { combo: { select: { id: true, name: true, currency: true } } } },
         payments: true,

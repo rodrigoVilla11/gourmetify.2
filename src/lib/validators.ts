@@ -58,11 +58,20 @@ export const ProductPreparationSchema = z.object({
   wastagePct: z.coerce.number().min(0).max(100).default(0),
 });
 
+export const CreateProductCategorySchema = z.object({
+  name: z.string().min(1, "Nombre requerido").max(80),
+  color: z.string().regex(/^#[0-9A-Fa-f]{6}$/, "Color hex inválido").default("#6B7280"),
+});
+
+export const UpdateProductCategorySchema = CreateProductCategorySchema.partial();
+
 export const CreateProductSchema = z.object({
   name: z.string().min(1, "Nombre requerido").max(100),
   sku: z.string().max(50).optional().nullable(),
   salePrice: z.coerce.number().min(0).default(0),
+  costPrice: z.coerce.number().min(0).default(0),
   currency: CurrencySchema.default("ARS"),
+  categoryId: z.string().cuid().optional().nullable(),
   ingredients: z.array(BOMItemSchema).default([]),
   preparations: z.array(ProductPreparationSchema).default([]),
 });
@@ -86,9 +95,24 @@ export const SaleComboItemSchema = z.object({
   quantity: z.coerce.number().positive("Cantidad debe ser positiva"),
 });
 
+export const CreateCustomerSchema = z.object({
+  name:    z.string().min(1, "Nombre requerido").max(100),
+  phone:   z.string().max(30).optional().nullable(),
+  email:   z.string().email("Email inválido").optional().nullable().or(z.literal("")),
+  address: z.string().max(200).optional().nullable(),
+  notes:   z.string().optional().nullable(),
+});
+export const UpdateCustomerSchema = CreateCustomerSchema.partial();
+
+export const OrderTypeSchema = z.enum(["SALON", "TAKEAWAY", "DELIVERY"]);
+
 export const CreateSaleSchema = z.object({
   date: z.string().optional(),
   notes: z.string().optional().nullable(),
+  customerId:   z.string().cuid().optional().nullable(),
+  customerName: z.string().max(100).optional().nullable(),
+  orderType:       OrderTypeSchema.default("SALON"),
+  deliveryAddress: z.string().max(200).optional().nullable(),
   items: z.array(SaleItemSchema).default([]),
   comboItems: z.array(SaleComboItemSchema).optional(),
   payments: z.array(SalePaymentSchema).optional(),
@@ -96,6 +120,13 @@ export const CreateSaleSchema = z.object({
   (d) => d.items.length > 0 || (d.comboItems && d.comboItems.length > 0),
   { message: "Al menos un producto o combo requerido" }
 );
+
+export const PaySaleSchema = z.object({
+  payments: z.array(z.object({
+    paymentMethod: PaymentMethodSchema,
+    amount:        z.coerce.number().positive(),
+  })).min(1, "Al menos un método de pago requerido"),
+});
 
 // ── Adjustments ──────────────────────────────────────────────────────────────
 
@@ -267,6 +298,15 @@ export const CreateComboSchema = z.object({
 });
 
 export const UpdateComboSchema = CreateComboSchema.partial();
+
+// ── Order Status ──────────────────────────────────────────────────────────────
+
+export const OrderStatusSchema = z.enum(["NUEVO", "EN_PREPARACION", "LISTO", "ENTREGADO", "CANCELADO"]);
+
+export const UpdateSaleStatusSchema = z.object({
+  status: OrderStatusSchema,
+  rollbackStock: z.boolean().optional(),
+});
 
 // ── Users / Auth ───────────────────────────────────────────────────────────────
 

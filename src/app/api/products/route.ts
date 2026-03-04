@@ -48,11 +48,15 @@ export async function GET(req: NextRequest) {
     const isActive = searchParams.get("isActive");
     const format = searchParams.get("format");
 
+    const categoryId = searchParams.get("categoryId");
+
     const products = await prisma.product.findMany({
       where: {
         ...(isActive !== null ? { isActive: isActive === "true" } : {}),
+        ...(categoryId ? { categoryId } : {}),
       },
       include: {
+        category: { select: { id: true, name: true, color: true } },
         ingredients: { include: { ingredient: { select: { id: true, name: true, unit: true } } } },
         preparations: { include: { preparation: { select: { id: true, name: true, unit: true } } } },
       },
@@ -116,6 +120,7 @@ export async function POST(req: NextRequest) {
           },
         },
         include: {
+          category: { select: { id: true, name: true, color: true } },
           ingredients: { include: { ingredient: { select: { id: true, name: true, unit: true } } } },
           preparations: { include: { preparation: { select: { id: true, name: true, unit: true } } } },
         },

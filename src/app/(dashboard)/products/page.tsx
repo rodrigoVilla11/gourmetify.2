@@ -14,6 +14,7 @@ import { formatCurrency } from "@/utils/currency";
 import { ImportButton } from "@/components/ui/ImportButton";
 import { downloadExcel } from "@/utils/excel";
 
+interface ProductCategory { id: string; name: string; color: string; _count?: { products: number } }
 interface Ingredient { id: string; name: string; unit: Unit; costPerUnit: string }
 interface Preparation { id: string; name: string; unit: Unit; costPrice: string }
 interface BOMEntry { ingredientId: string; qty: number; unit: Unit; wastagePct: number }
@@ -25,6 +26,8 @@ interface Product {
   salePrice: string;
   costPrice: string;
   currency: Currency;
+  categoryId: string | null;
+  category: ProductCategory | null;
   isActive: boolean;
   ingredients: { ingredientId: string; qty: string; unit: Unit; wastagePct: string; ingredient: Ingredient }[];
   preparations: { preparationId: string; qty: string; unit: Unit; wastagePct: string; preparation: Preparation }[];
@@ -34,14 +37,22 @@ interface ProductForm {
   sku?: string;
   salePrice: number;
   currency: Currency;
+  categoryId?: string;
   ingredients: BOMEntry[];
   preparations: PrepBOMEntry[];
 }
+
+const PRESET_COLORS = [
+  "#6B7280", "#EF4444", "#F97316", "#EAB308",
+  "#22C55E", "#10B981", "#06B6D4", "#3B82F6",
+  "#8B5CF6", "#EC4899",
+];
 
 export default function ProductsPage() {
   const [products, setProducts] = useState<Product[]>([]);
   const [ingredients, setIngredients] = useState<Ingredient[]>([]);
   const [preparations, setPreparations] = useState<Preparation[]>([]);
+  const [categories, setCategories] = useState<ProductCategory[]>([]);
   const [loading, setLoading] = useState(true);
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [editingItem, setEditingItem] = useState<Product | null>(null);
@@ -49,6 +60,16 @@ export default function ProductsPage() {
   const [isDeleting, setIsDeleting] = useState(false);
   const [saving, setSaving] = useState(false);
   const [showInactive, setShowInactive] = useState(false);
+  const [filterCategoryId, setFilterCategoryId] = useState<string>("all");
+
+  // Category management
+  const [isCatModalOpen, setIsCatModalOpen] = useState(false);
+  const [editingCat, setEditingCat] = useState<ProductCategory | null>(null);
+  const [catName, setCatName] = useState("");
+  const [catColor, setCatColor] = useState("#6B7280");
+  const [savingCat, setSavingCat] = useState(false);
+  const [deletingCatId, setDeletingCatId] = useState<string | null>(null);
+  const [isDeletingCat, setIsDeletingCat] = useState(false);
 
   const { register, handleSubmit, reset, watch, control, setValue, formState: { errors } } = useForm<ProductForm>({
     defaultValues: { currency: "ARS", salePrice: 0, ingredients: [], preparations: [] },
@@ -58,17 +79,20 @@ export default function ProductsPage() {
 
   const fetchData = useCallback(async () => {
     setLoading(true);
-    const [prodRes, ingRes, prepRes] = await Promise.all([
+    const [prodRes, ingRes, prepRes, catRes] = await Promise.all([
       fetch("/api/products"),
       fetch("/api/ingredients?isActive=true"),
       fetch("/api/preparations?isActive=true"),
+      fetch("/api/product-categories"),
     ]);
     const { data: prods } = await prodRes.json();
     const { data: ings } = await ingRes.json();
     const { data: preps } = await prepRes.json();
+    const cats = await catRes.json();
     setProducts(prods ?? []);
     setIngredients(ings ?? []);
     setPreparations(preps ?? []);
+    setCategories(Array.isArray(cats) ? cats : []);
     setLoading(false);
   }, []);
 
@@ -76,7 +100,7 @@ export default function ProductsPage() {
 
   const openCreate = () => {
     setEditingItem(null);
-    reset({ name: "", sku: "", salePrice: 0, currency: "ARS", ingredients: [], preparations: [] });
+    reset({ name: "", sku: "", salePrice: 0, currency: "ARS", categoryId: "", ingredients: [], preparations: [] });
     setIsModalOpen(true);
   };
 
@@ -87,6 +111,7 @@ export default function ProductsPage() {
       sku: p.sku ?? "",
       salePrice: parseFloat(p.salePrice),
       currency: p.currency,
+      categoryId: p.categoryId ?? "",
       ingredients: p.ingredients.map((b) => ({
         ingredientId: b.ingredientId,
         qty: parseFloat(b.qty),
@@ -105,7 +130,7 @@ export default function ProductsPage() {
 
   const onSubmit = async (data: ProductForm) => {
     setSaving(true);
-    const body = { ...data, sku: data.sku || null };
+    const body = { ...data, sku: data.sku || null, categoryId: data.categoryId || null };
     try {
       if (editingItem) {
         await fetch(`/api/products/${editingItem.id}`, {
@@ -136,11 +161,58 @@ export default function ProductsPage() {
     fetchData();
   };
 
+  // Category CRUD
+  const openCreateCat = () => {
+    setEditingCat(null);
+    setCatName("");
+    setCatColor("#6B7280");
+    setIsCatModalOpen(true);
+  };
+
+  const openEditCat = (cat: ProductCategory) => {
+    setEditingCat(cat);
+    setCatName(cat.name);
+    setCatColor(cat.color);
+    setIsCatModalOpen(true);
+  };
+
+  const saveCat = async () => {
+    if (!catName.trim()) return;
+    setSavingCat(true);
+    try {
+      if (editingCat) {
+        await fetch(`/api/product-categories/${editingCat.id}`, {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ name: catName.trim(), color: catColor }),
+        });
+      } else {
+        await fetch("/api/product-categories", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ name: catName.trim(), color: catColor }),
+        });
+      }
+      setIsCatModalOpen(false);
+      fetchData();
+    } finally {
+      setSavingCat(false);
+    }
+  };
+
+  const handleDeleteCat = async () => {
+    if (!deletingCatId) return;
+    setIsDeletingCat(true);
+    await fetch(`/api/product-categories/${deletingCatId}`, { method: "DELETE" });
+    setDeletingCatId(null);
+    setIsDeletingCat(false);
+    fetchData();
+  };
+
   const watchedIngredients = watch("ingredients");
   const watchedPreparations = watch("preparations");
   const watchedSalePrice = watch("salePrice");
 
-  // Live cost computed from current BOM selections
   const computedCost = (() => {
     let total = 0;
     for (const bom of watchedIngredients) {
@@ -162,16 +234,26 @@ export default function ProductsPage() {
     ? ((watchedSalePrice - computedCost) / watchedSalePrice) * 100
     : null;
 
-  const visible = products.filter((p) => showInactive || p.isActive);
+  const visible = products
+    .filter((p) => showInactive || p.isActive)
+    .filter((p) => filterCategoryId === "all" || filterCategoryId === "none" ? (filterCategoryId === "none" ? !p.categoryId : true) : p.categoryId === filterCategoryId);
 
   const columns: Column<Product>[] = [
     {
       key: "name",
       header: "Nombre",
       render: (p) => (
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 flex-wrap">
           <span className="font-medium">{p.name}</span>
           {p.sku && <span className="text-xs text-gray-400">{p.sku}</span>}
+          {p.category && (
+            <span
+              className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium text-white"
+              style={{ backgroundColor: p.category.color }}
+            >
+              {p.category.name}
+            </span>
+          )}
           {!p.isActive && <Badge variant="neutral">Inactivo</Badge>}
         </div>
       ),
@@ -230,6 +312,7 @@ export default function ProductsPage() {
             Mostrar inactivos
           </label>
           <div className="flex items-start gap-3">
+            <Button variant="secondary" onClick={openCreateCat}>Categorías</Button>
             <ImportButton
               endpoint="/api/products/import"
               templateHeaders={["Nombre", "SKU", "Precio de Venta", "Moneda"]}
@@ -244,23 +327,52 @@ export default function ProductsPage() {
         </div>
       </div>
 
+      {/* Category filter tabs */}
+      {categories.length > 0 && (
+        <div className="flex flex-wrap gap-2">
+          <button
+            onClick={() => setFilterCategoryId("all")}
+            className={`px-3 py-1.5 rounded-full text-xs font-medium transition-colors ${filterCategoryId === "all" ? "bg-gray-800 text-white" : "bg-gray-100 text-gray-600 hover:bg-gray-200"}`}
+          >
+            Todos
+          </button>
+          {categories.map((cat) => (
+            <button
+              key={cat.id}
+              onClick={() => setFilterCategoryId(filterCategoryId === cat.id ? "all" : cat.id)}
+              className={`px-3 py-1.5 rounded-full text-xs font-medium transition-colors ${filterCategoryId === cat.id ? "text-white" : "bg-gray-100 text-gray-600 hover:bg-gray-200"}`}
+              style={filterCategoryId === cat.id ? { backgroundColor: cat.color } : {}}
+            >
+              {cat.name}
+            </button>
+          ))}
+          <button
+            onClick={() => setFilterCategoryId(filterCategoryId === "none" ? "all" : "none")}
+            className={`px-3 py-1.5 rounded-full text-xs font-medium transition-colors ${filterCategoryId === "none" ? "bg-gray-800 text-white" : "bg-gray-100 text-gray-600 hover:bg-gray-200"}`}
+          >
+            Sin categoría
+          </button>
+        </div>
+      )}
+
       <div className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
         <Table columns={columns} data={visible} isLoading={loading} rowKey={(p) => p.id} emptyMessage="No hay productos registrados" />
       </div>
 
+      {/* Product modal */}
       <Modal isOpen={isModalOpen} onClose={() => setIsModalOpen(false)} title={editingItem ? "Editar Producto" : "Nuevo Producto"} size="xl">
         <form onSubmit={handleSubmit(onSubmit)} className="space-y-5">
           <Input label="Nombre *" {...register("name", { required: "Nombre requerido" })} error={errors.name?.message} />
-          <div className="grid grid-cols-3 gap-4">
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
             <Input label="SKU" {...register("sku")} placeholder="Opcional" />
             <div>
               <Input label="Precio de venta" type="number" step="0.01" {...register("salePrice", { valueAsNumber: true })} />
               {computedCost > 0 && (
                 <p className="text-xs mt-1 text-gray-500">
-                  Costo estimado: {formatCurrency(computedCost.toFixed(2), "ARS")}
+                  Costo: {formatCurrency(computedCost.toFixed(2), "ARS")}
                   {formMargin !== null && (
                     <span className={`ml-2 font-medium ${formMargin >= 0 ? "text-emerald-600" : "text-red-500"}`}>
-                      ({formMargin >= 0 ? "+" : ""}{formMargin.toFixed(1)}% margen)
+                      ({formMargin >= 0 ? "+" : ""}{formMargin.toFixed(1)}%)
                     </span>
                   )}
                 </p>
@@ -268,6 +380,12 @@ export default function ProductsPage() {
             </div>
             <Select label="Moneda" {...register("currency")}>
               {CURRENCIES.map((c) => <option key={c} value={c}>{c}</option>)}
+            </Select>
+            <Select label="Categoría" {...register("categoryId")}>
+              <option value="">Sin categoría</option>
+              {categories.map((cat) => (
+                <option key={cat.id} value={cat.id}>{cat.name}</option>
+              ))}
             </Select>
           </div>
 
@@ -419,6 +537,83 @@ export default function ProductsPage() {
         </form>
       </Modal>
 
+      {/* Category management modal */}
+      <Modal isOpen={isCatModalOpen} onClose={() => setIsCatModalOpen(false)} title={editingCat ? "Editar categoría" : "Gestionar categorías"} size="md">
+        <div className="space-y-4">
+          {/* Create / edit form */}
+          <div className="space-y-3 p-4 bg-gray-50 rounded-xl">
+            <h3 className="text-sm font-semibold text-gray-700">{editingCat ? "Editar categoría" : "Nueva categoría"}</h3>
+            <Input
+              label="Nombre"
+              value={catName}
+              onChange={(e) => setCatName(e.target.value)}
+              placeholder="Ej: Bebidas, Hamburguesas..."
+            />
+            <div>
+              <p className="text-xs font-medium text-gray-600 mb-2">Color</p>
+              <div className="flex flex-wrap gap-2">
+                {PRESET_COLORS.map((c) => (
+                  <button
+                    key={c}
+                    type="button"
+                    onClick={() => setCatColor(c)}
+                    className="w-7 h-7 rounded-full border-2 transition-all"
+                    style={{ backgroundColor: c, borderColor: catColor === c ? "#111" : "transparent" }}
+                  />
+                ))}
+                <input
+                  type="color"
+                  value={catColor}
+                  onChange={(e) => setCatColor(e.target.value)}
+                  className="w-7 h-7 rounded-full cursor-pointer border border-gray-300"
+                  title="Color personalizado"
+                />
+              </div>
+              <div className="mt-2">
+                <span
+                  className="inline-flex items-center px-3 py-1 rounded-full text-xs font-medium text-white"
+                  style={{ backgroundColor: catColor }}
+                >
+                  {catName || "Vista previa"}
+                </span>
+              </div>
+            </div>
+            <div className="flex gap-2 justify-end">
+              {editingCat && (
+                <Button variant="secondary" type="button" onClick={() => { setEditingCat(null); setCatName(""); setCatColor("#6B7280"); }}>
+                  Cancelar
+                </Button>
+              )}
+              <Button onClick={saveCat} isLoading={savingCat} disabled={!catName.trim()}>
+                {editingCat ? "Guardar" : "Crear"}
+              </Button>
+            </div>
+          </div>
+
+          {/* Existing categories */}
+          {categories.length > 0 && (
+            <div className="space-y-2">
+              <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide">Categorías existentes</p>
+              {categories.map((cat) => (
+                <div key={cat.id} className="flex items-center justify-between p-2 rounded-lg hover:bg-gray-50">
+                  <div className="flex items-center gap-2">
+                    <span className="w-4 h-4 rounded-full flex-shrink-0" style={{ backgroundColor: cat.color }} />
+                    <span className="text-sm font-medium text-gray-800">{cat.name}</span>
+                    {cat._count && (
+                      <span className="text-xs text-gray-400">{cat._count.products} productos</span>
+                    )}
+                  </div>
+                  <div className="flex gap-1">
+                    <Button size="sm" variant="ghost" onClick={() => openEditCat(cat)}>Editar</Button>
+                    <Button size="sm" variant="danger" onClick={() => setDeletingCatId(cat.id)}>Eliminar</Button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      </Modal>
+
       <ConfirmDialog
         isOpen={!!deletingId}
         onClose={() => setDeletingId(null)}
@@ -427,6 +622,16 @@ export default function ProductsPage() {
         message="El producto quedará inactivo y no podrá usarse en nuevas ventas."
         confirmLabel="Desactivar"
         isLoading={isDeleting}
+      />
+
+      <ConfirmDialog
+        isOpen={!!deletingCatId}
+        onClose={() => setDeletingCatId(null)}
+        onConfirm={handleDeleteCat}
+        title="Eliminar categoría"
+        message="Los productos de esta categoría quedarán sin categoría asignada."
+        confirmLabel="Eliminar"
+        isLoading={isDeletingCat}
       />
     </div>
   );
