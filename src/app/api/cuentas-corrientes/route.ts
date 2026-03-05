@@ -1,9 +1,13 @@
-import { NextResponse } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
+import { requireOrg } from "@/lib/requireOrg";
 
-export async function GET() {
+export async function GET(req: NextRequest) {
+  let orgId: string;
+  try { orgId = requireOrg(req); } catch (e) { return e as Response; }
   try {
     const suppliers = await prisma.supplier.findMany({
+      where: { organizationId: orgId },
       orderBy: { name: "asc" },
       include: {
         invoices: {

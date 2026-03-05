@@ -3,8 +3,11 @@ import { revalidateTag } from "next/cache";
 import { prisma } from "@/lib/prisma";
 import { CreateAdjustmentSchema } from "@/lib/validators";
 import { ZodError } from "zod";
+import { requireOrg } from "@/lib/requireOrg";
 
-export async function POST(req: NextRequest) {
+export async function POST(req: NextRequest) {  let orgId: string;
+  try { orgId = requireOrg(req); } catch (e) { return e as Response; }
+
   try {
     const body = await req.json();
     const { ingredientId, delta, reason } = CreateAdjustmentSchema.parse(body);
@@ -13,6 +16,7 @@ export async function POST(req: NextRequest) {
       prisma.stockMovement.create({
         data: {
           ingredientId,
+          organizationId: orgId,
           type: "ADJUSTMENT",
           delta,
           reason: reason ?? "Ajuste manual",
@@ -20,12 +24,12 @@ export async function POST(req: NextRequest) {
         include: { ingredient: true },
       }),
       prisma.ingredient.update({
-        where: { id: ingredientId },
+        where: { id: ingredientId, organizationId: orgId },
         data: { onHand: { increment: delta } },
       }),
     ]);
 
-    revalidateTag("dashboard");
+    revalidateTag(`dashboard:${orgId}`);
     return NextResponse.json(movement, { status: 201 });
   } catch (e) {
     if (e instanceof ZodError) {
@@ -35,12 +39,15 @@ export async function POST(req: NextRequest) {
   }
 }
 
-export async function GET(req: NextRequest) {
+export async function GET(req: NextRequest) {  let orgId: string;
+  try { orgId = requireOrg(req); } catch (e) { return e as Response; }
+
   try {
     const { searchParams } = new URL(req.url);
     const ingredientId = searchParams.get("ingredientId");
     const movements = await prisma.stockMovement.findMany({
       where: {
+        organizationId: orgId,
         type: "ADJUSTMENT",
         ...(ingredientId ? { ingredientId } : {}),
       },

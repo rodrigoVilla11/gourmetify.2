@@ -1,8 +1,11 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { UpdateProductCategorySchema } from "@/lib/validators";
+import { requireOrg } from "@/lib/requireOrg";
 
-export async function PUT(req: NextRequest, { params }: { params: { id: string } }) {
+export async function PUT(req: NextRequest, { params }: { params: { id: string } }) {  let orgId: string;
+  try { orgId = requireOrg(req); } catch (e) { return e as Response; }
+
   try {
     const body = await req.json();
     const parsed = UpdateProductCategorySchema.safeParse(body);
@@ -26,7 +29,9 @@ export async function PUT(req: NextRequest, { params }: { params: { id: string }
   }
 }
 
-export async function DELETE(_req: NextRequest, { params }: { params: { id: string } }) {
+export async function DELETE(_req: NextRequest, { params }: { params: { id: string } }) {  let orgId: string;
+  try { orgId = requireOrg(req); } catch (e) { return e as Response; }
+
   try {
     await prisma.productCategory.delete({ where: { id: params.id } });
     return NextResponse.json({ ok: true });

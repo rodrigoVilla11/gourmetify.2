@@ -2,13 +2,16 @@ import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { UpdateSupplierInvoiceSchema } from "@/lib/validators";
 import { ZodError } from "zod";
+import { requireOrg } from "@/lib/requireOrg";
 
 type Params = { params: { id: string } };
 
-export async function GET(_: NextRequest, { params }: Params) {
+export async function GET(req: NextRequest, { params }: Params) {
+  let orgId: string;
+  try { orgId = requireOrg(req); } catch (e) { return e as Response; }
   try {
     const invoice = await prisma.supplierInvoice.findUnique({
-      where: { id: params.id },
+      where: { id: params.id, organizationId: orgId },
       include: {
         supplier: true,
         supplierPayments: { orderBy: { date: "asc" } },
@@ -21,12 +24,14 @@ export async function GET(_: NextRequest, { params }: Params) {
   }
 }
 
-export async function PUT(req: NextRequest, { params }: Params) {
+export async function PUT(req: NextRequest, { params }: Params) {  let orgId: string;
+  try { orgId = requireOrg(req); } catch (e) { return e as Response; }
+
   try {
     const body = await req.json();
     const data = UpdateSupplierInvoiceSchema.parse(body);
     const invoice = await prisma.supplierInvoice.update({
-      where: { id: params.id },
+      where: { id: params.id, organizationId: orgId },
       data: {
         ...data,
         date: data.date ? new Date(data.date) : undefined,

@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { z, ZodError } from "zod";
+import { requireOrg, requireFeature } from "@/lib/requireOrg";
 
 type Params = { params: { id: string } };
 
@@ -16,16 +17,20 @@ const PutSchedulesSchema = z.object({
 });
 
 // PUT /api/schedules/employee/[id]  →  replace all schedules for an employee
-export async function PUT(req: NextRequest, { params }: Params) {
+export async function PUT(req: NextRequest, { params }: Params) {  let orgId: string;
+  try { orgId = requireOrg(req); } catch (e) { return e as Response; }
+  try { requireFeature(req, "horarios"); } catch (e) { return e as Response; }
+
   try {
     const body = await req.json();
     const { schedules } = PutSchedulesSchema.parse(body);
 
     await prisma.$transaction(async (tx) => {
-      await tx.workSchedule.deleteMany({ where: { employeeId: params.id } });
+      await tx.workSchedule.deleteMany({ where: { organizationId: orgId, employeeId: params.id } });
       if (schedules.length > 0) {
         await tx.workSchedule.createMany({
           data: schedules.map((s) => ({
+            organizationId: orgId,
             employeeId: params.id,
             dayOfWeek: s.dayOfWeek,
             shiftIndex: s.shiftIndex,
@@ -37,7 +42,7 @@ export async function PUT(req: NextRequest, { params }: Params) {
     });
 
     const updated = await prisma.workSchedule.findMany({
-      where: { employeeId: params.id },
+      where: { organizationId: orgId, employeeId: params.id },
       orderBy: { dayOfWeek: "asc" },
     });
 

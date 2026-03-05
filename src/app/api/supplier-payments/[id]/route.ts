@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
+import { requireOrg } from "@/lib/requireOrg";
 
 type Params = { params: { id: string } };
 
@@ -9,17 +10,19 @@ function calcInvoiceStatus(totalPaid: number, invoiceAmount: number): string {
   return "PENDING";
 }
 
-export async function DELETE(_: NextRequest, { params }: Params) {
+export async function DELETE(req: NextRequest, { params }: Params) {
+  let orgId: string;
+  try { orgId = requireOrg(req); } catch (e) { return e as Response; }
   try {
     await prisma.$transaction(async (tx) => {
-      const payment = await tx.supplierPayment.findUnique({ where: { id: params.id } });
+      const payment = await tx.supplierPayment.findUnique({ where: { id: params.id, organizationId: orgId } });
       if (!payment) return;
 
-      await tx.supplierPayment.delete({ where: { id: params.id } });
+      await tx.supplierPayment.delete({ where: { id: params.id, organizationId: orgId } });
 
       if (payment.invoiceId) {
         const invoice = await tx.supplierInvoice.findUnique({
-          where: { id: payment.invoiceId },
+          where: { id: payment.invoiceId, organizationId: orgId },
           include: { supplierPayments: true },
         });
         if (invoice) {

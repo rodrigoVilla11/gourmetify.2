@@ -7,78 +7,157 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
-// Enums stored as String for consistency across all models.
+// ── Plans ─────────────────────────────────────────────────────────────────────
+
+enum Plan {
+  FREE
+  STARTER
+  PRO
+}
+
+// ── Organizations (Multi-tenancy) ──────────────────────────────────────────────
+
+model Organization {
+  id        String   @id @default(cuid())
+  name      String
+  slug      String   @unique
+  isActive  Boolean  @default(true)
+  // Subscription plan
+  plan          Plan      @default(FREE)
+  planExpiresAt DateTime? @map("plan_expires_at")
+  // Profile fields
+  logoUrl     String?
+  website     String?
+  instagram   String?
+  phone       String?
+  address     String?
+  category    String?
+  description String?
+  whatsapp    String?
+  // Extended config
+  deliveryFee    Decimal? @map("delivery_fee")
+  paymentMethods Json?   @map("payment_methods")
+  businessHours  Json?   @map("business_hours")
+  modalities     Json?   @map("modalities")
+  colorPrimary   String? @map("color_primary")
+  colorSecondary String? @map("color_secondary")
+  colorAccent    String? @map("color_accent")
+  coverImageUrl  String? @map("cover_image_url")
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  users                User[]
+  suppliers            Supplier[]
+  ingredients          Ingredient[]
+  productCategories    ProductCategory[]
+  products             Product[]
+  customers            Customer[]
+  repartidores         Repartidor[]
+  sales                Sale[]
+  stockMovements       StockMovement[]
+  incomeEntries        IncomeEntry[]
+  expenseCategories    ExpenseCategory[]
+  expenses             Expense[]
+  cashSessions         CashSession[]
+  supplierInvoices     SupplierInvoice[]
+  supplierPayments     SupplierPayment[]
+  employees            Employee[]
+  timeLogs             TimeLog[]
+  workSchedules        WorkSchedule[]
+  restDays             RestDay[]
+  preparations         Preparation[]
+  preparationMovements PreparationMovement[]
+  combos               Combo[]
+
+  @@map("organizations")
+}
+
+// ── Core business models ───────────────────────────────────────────────────────
 
 model Supplier {
-  id           String  @id @default(cuid())
-  name         String
-  phone        String?
-  email        String?
-  notes        String?
-  paymentTerms String  @default("ON_DELIVERY") // ON_DELIVERY | IMMEDIATE | CREDIT
-  creditDays   Int     @default(0)
-  createdAt    DateTime @default(now())
-  updatedAt    DateTime @updatedAt
+  id             String  @id @default(cuid())
+  organizationId String  @map("organization_id")
+  name           String
+  phone          String?
+  email          String?
+  notes          String?
+  paymentTerms   String  @default("ON_DELIVERY")
+  creditDays     Int     @default(0)
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
 
+  organization     Organization    @relation(fields: [organizationId], references: [id])
   ingredients      Ingredient[]
   invoices         SupplierInvoice[]
   supplierPayments SupplierPayment[]
 
+  @@index([organizationId])
   @@map("suppliers")
 }
 
 model Ingredient {
-  id                 String              @id @default(cuid())
+  id                 String   @id @default(cuid())
+  organizationId     String   @map("organization_id")
   name               String
-  unit               String              // "KG"|"G"|"L"|"ML"|"UNIT"
-  onHand             Decimal             @default(0)
-  minQty             Decimal             @default(0)
-  costPerUnit        Decimal             @default(0)
-  currency           String              @default("ARS") // "ARS"|"EUR"|"USD"
+  unit               String
+  onHand             Decimal  @default(0)
+  minQty             Decimal  @default(0)
+  costPerUnit        Decimal  @default(0)
+  currency           String   @default("ARS")
   supplierId         String?
-  isActive           Boolean             @default(true)
-  createdAt          DateTime            @default(now())
-  updatedAt          DateTime            @updatedAt
+  isActive           Boolean  @default(true)
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
 
+  organization           Organization            @relation(fields: [organizationId], references: [id])
   supplier               Supplier?               @relation(fields: [supplierId], references: [id])
   productIngredients     ProductIngredient[]
   stockMovements         StockMovement[]
   preparationIngredients PreparationIngredient[]
 
-  @@index([isActive])
+  @@index([organizationId, isActive])
   @@index([supplierId])
   @@map("ingredients")
 }
 
 model ProductCategory {
-  id       String    @id @default(cuid())
-  name     String    @unique
-  color    String    @default("#6B7280")
+  id             String  @id @default(cuid())
+  organizationId String  @map("organization_id")
+  name           String
+  color          String  @default("#6B7280")
 
-  products Product[]
+  organization Organization @relation(fields: [organizationId], references: [id])
+  products     Product[]
 
+  @@unique([name, organizationId])
+  @@index([organizationId])
   @@map("product_categories")
 }
 
 model Product {
-  id          String              @id @default(cuid())
-  name        String
-  sku         String?             @unique
-  salePrice   Decimal             @default(0)
-  costPrice   Decimal             @default(0)
-  currency    String              @default("ARS")
-  categoryId  String?             @map("category_id")
-  isActive    Boolean             @default(true)
-  createdAt   DateTime            @default(now())
-  updatedAt   DateTime            @updatedAt
+  id             String   @id @default(cuid())
+  organizationId String   @map("organization_id")
+  name           String
+  sku            String?
+  salePrice      Decimal  @default(0)
+  costPrice      Decimal  @default(0)
+  currency       String   @default("ARS")
+  categoryId     String?  @map("category_id")
+  isActive       Boolean  @default(true)
+  imageUrl       String?  @map("image_url")
+  description    String?
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
 
-  category     ProductCategory?    @relation(fields: [categoryId], references: [id], onDelete: SetNull)
+  organization Organization    @relation(fields: [organizationId], references: [id])
+  category     ProductCategory? @relation(fields: [categoryId], references: [id], onDelete: SetNull)
   ingredients  ProductIngredient[]
   preparations ProductPreparation[]
   saleItems    SaleItem[]
   combos       ComboProduct[]
 
-  @@index([isActive])
+  @@unique([sku, organizationId])
+  @@index([organizationId, isActive])
   @@index([categoryId])
   @@map("products")
 }
@@ -97,53 +176,81 @@ model ProductIngredient {
   @@map("product_ingredients")
 }
 
+model Repartidor {
+  id             String   @id @default(cuid())
+  organizationId String   @map("organization_id")
+  name           String
+  phone          String?
+  isActive       Boolean  @default(true)  @map("is_active")
+  createdAt      DateTime @default(now()) @map("created_at")
+  updatedAt      DateTime @updatedAt      @map("updated_at")
+
+  organization Organization @relation(fields: [organizationId], references: [id])
+  sales        Sale[]
+
+  @@index([organizationId, isActive])
+  @@map("repartidores")
+}
+
 model Customer {
-  id        String   @id @default(cuid())
-  name      String
-  phone     String?  @unique
-  email     String?
-  address   String?
-  notes     String?
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  id             String   @id @default(cuid())
+  organizationId String   @map("organization_id")
+  name           String
+  phone          String?
+  email          String?
+  address        String?
+  notes          String?
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
 
-  sales Sale[]
+  organization Organization @relation(fields: [organizationId], references: [id])
+  sales        Sale[]
 
+  @@unique([phone, organizationId])
+  @@index([organizationId])
   @@index([phone])
   @@map("customers")
 }
 
 model Sale {
-  id           String   @id @default(cuid())
-  date         DateTime @default(now())
-  notes        String?
-  total        Decimal  @default(0)
-  customerId   String?  @map("customer_id")
-  customerName String?  @map("customer_name")
-  orderType       String    @default("SALON")  @map("order_type")   // SALON|TAKEAWAY|DELIVERY
-  isPaid          Boolean   @default(false)    @map("is_paid")
+  id              String    @id @default(cuid())
+  organizationId  String    @map("organization_id")
+  date            DateTime  @default(now())
+  notes           String?
+  total           Decimal   @default(0)
+  customerId      String?   @map("customer_id")
+  customerName    String?   @map("customer_name")
+  orderType       String    @default("SALON")   @map("order_type")
+  isPaid          Boolean   @default(false)      @map("is_paid")
   deliveryAddress String?   @map("delivery_address")
-  orderStatus     String    @default("NUEVO")  @map("order_status") // NUEVO|EN_PREPARACION|LISTO|ENTREGADO|CANCELADO
-  startedAt       DateTime? @map("started_at")
-  readyAt         DateTime? @map("ready_at")
-  deliveredAt     DateTime? @map("delivered_at")
-  createdAt       DateTime  @default(now())
+  orderStatus      String    @default("NUEVO")   @map("order_status")
+  dailyOrderNumber Int?      @map("daily_order_number")
+  repartidorId     String?   @map("repartidor_id")
+  deliveryFee      Decimal?  @map("delivery_fee")
+  startedAt        DateTime? @map("started_at")
+  readyAt          DateTime? @map("ready_at")
+  deliveredAt      DateTime? @map("delivered_at")
+  delayMinutes     Int?      @map("delay_minutes")
+  createdAt        DateTime  @default(now())
 
+  organization   Organization    @relation(fields: [organizationId], references: [id])
   customer       Customer?       @relation(fields: [customerId], references: [id], onDelete: SetNull)
+  repartidor     Repartidor?     @relation(fields: [repartidorId], references: [id], onDelete: SetNull)
   items          SaleItem[]
   stockMovements StockMovement[]
   payments       SalePayment[]
   combos         SaleCombo[]
 
-  @@index([date])
+  @@index([organizationId, date])
   @@index([customerId])
   @@map("sales")
 }
 
 model SaleItem {
-  saleId    String
-  productId String
-  quantity  Decimal
+  saleId        String
+  productId     String
+  quantity      Decimal
+  isUnavailable Boolean @default(false) @map("is_unavailable")
 
   sale    Sale    @relation(fields: [saleId], references: [id], onDelete: Cascade)
   product Product @relation(fields: [productId], references: [id])
@@ -156,7 +263,7 @@ model SaleItem {
 model SalePayment {
   id            String  @id @default(cuid())
   saleId        String
-  paymentMethod String  // EFECTIVO|TRANSFERENCIA|ONLINE|DEBITO|CREDITO|RAPPI|MERCADO_ENVIOS
+  paymentMethod String
   amount        Decimal
 
   sale Sale @relation(fields: [saleId], references: [id], onDelete: Cascade)
@@ -165,64 +272,75 @@ model SalePayment {
 }
 
 model StockMovement {
-  id           String   @id @default(cuid())
-  ingredientId String
-  type         String
-  delta        Decimal
-  reason       String?
-  refId        String?
-  createdAt    DateTime @default(now())
+  id             String   @id @default(cuid())
+  organizationId String   @map("organization_id")
+  ingredientId   String
+  type           String
+  delta          Decimal
+  reason         String?
+  refId          String?
+  createdAt      DateTime @default(now())
 
-  ingredient Ingredient @relation(fields: [ingredientId], references: [id])
-  sale       Sale?      @relation(fields: [refId], references: [id])
+  organization Organization @relation(fields: [organizationId], references: [id])
+  ingredient   Ingredient   @relation(fields: [ingredientId], references: [id])
+  sale         Sale?        @relation(fields: [refId], references: [id])
 
-  @@index([type, createdAt])
+  @@index([organizationId, type, createdAt])
   @@index([ingredientId, type])
   @@map("stock_movements")
 }
 
 model IncomeEntry {
-  id            String   @id @default(cuid())
-  amount        Decimal
-  currency      String   @default("ARS")
-  date          DateTime @default(now())
-  paymentMethod String
-  description   String
-  notes         String?
-  createdAt     DateTime @default(now())
-  updatedAt     DateTime @updatedAt
+  id             String   @id @default(cuid())
+  organizationId String   @map("organization_id")
+  amount         Decimal
+  currency       String   @default("ARS")
+  date           DateTime @default(now())
+  paymentMethod  String
+  description    String
+  notes          String?
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
 
-  @@index([date])
+  organization Organization @relation(fields: [organizationId], references: [id])
+
+  @@index([organizationId, date])
   @@map("income_entries")
 }
 
 model ExpenseCategory {
-  id       String    @id @default(cuid())
-  name     String    @unique
-  color    String    @default("#6B7280")
+  id             String  @id @default(cuid())
+  organizationId String  @map("organization_id")
+  name           String
+  color          String  @default("#6B7280")
 
-  expenses Expense[]
+  organization Organization @relation(fields: [organizationId], references: [id])
+  expenses     Expense[]
 
+  @@unique([name, organizationId])
+  @@index([organizationId])
   @@map("expense_categories")
 }
 
 model Expense {
-  id            String   @id @default(cuid())
-  amount        Decimal
-  currency      String   @default("ARS")
-  date          DateTime @default(now())
-  description   String
-  categoryId    String?
-  cashSessionId String?  @map("cash_session_id")
-  paymentMethod String?
-  notes         String?
-  createdAt     DateTime @default(now())
-  updatedAt     DateTime @updatedAt
+  id             String   @id @default(cuid())
+  organizationId String   @map("organization_id")
+  amount         Decimal
+  currency       String   @default("ARS")
+  date           DateTime @default(now())
+  description    String
+  categoryId     String?
+  cashSessionId  String?  @map("cash_session_id")
+  paymentMethod  String?
+  notes          String?
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
 
-  category    ExpenseCategory? @relation(fields: [categoryId], references: [id], onDelete: SetNull)
-  cashSession CashSession?     @relation(fields: [cashSessionId], references: [id], onDelete: SetNull)
+  organization Organization     @relation(fields: [organizationId], references: [id])
+  category     ExpenseCategory? @relation(fields: [categoryId], references: [id], onDelete: SetNull)
+  cashSession  CashSession?     @relation(fields: [cashSessionId], references: [id], onDelete: SetNull)
 
-  @@index([date])
+  @@index([organizationId, date])
   @@index([categoryId])
   @@index([cashSessionId])
   @@map("expenses")
@@ -230,6 +348,7 @@ model Expense {
 
 model CashSession {
   id             String    @id @default(cuid())
+  organizationId String    @map("organization_id")
   openedAt       DateTime  @default(now())
   closedAt       DateTime?
   openingBalance Decimal   @default(0)
@@ -237,111 +356,156 @@ model CashSession {
   notes          String?
   createdAt      DateTime  @default(now())
 
-  expenses Expense[]
+  organization Organization @relation(fields: [organizationId], references: [id])
+  expenses     Expense[]
 
-  @@index([closedAt])
+  @@index([organizationId, closedAt])
   @@map("cash_sessions")
 }
 
 model SupplierInvoice {
-  id            String    @id @default(cuid())
-  supplierId    String
-  amount        Decimal
-  currency      String    @default("ARS")
-  date          DateTime  @default(now())
-  dueDate       DateTime?
-  invoiceNumber String?
-  imageUrl      String?
-  notes         String?
-  status        String    @default("PENDING") // PENDING|PARTIAL|PAID
-  createdAt     DateTime  @default(now())
-  updatedAt     DateTime  @updatedAt
+  id             String    @id @default(cuid())
+  organizationId String    @map("organization_id")
+  supplierId     String
+  amount         Decimal
+  currency       String    @default("ARS")
+  date           DateTime  @default(now())
+  dueDate        DateTime?
+  invoiceNumber  String?
+  imageUrl       String?
+  notes          String?
+  status         String    @default("PENDING")
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
 
+  organization     Organization      @relation(fields: [organizationId], references: [id])
   supplier         Supplier          @relation(fields: [supplierId], references: [id])
   supplierPayments SupplierPayment[]
 
-  @@index([supplierId])
+  @@index([organizationId, supplierId])
   @@index([status])
   @@map("supplier_invoices")
 }
 
 model SupplierPayment {
-  id            String   @id @default(cuid())
-  supplierId    String
-  invoiceId     String?
-  amount        Decimal
-  currency      String   @default("ARS")
-  date          DateTime @default(now())
-  paymentMethod String
-  notes         String?
-  createdAt     DateTime @default(now())
+  id             String   @id @default(cuid())
+  organizationId String   @map("organization_id")
+  supplierId     String
+  invoiceId      String?
+  amount         Decimal
+  currency       String   @default("ARS")
+  date           DateTime @default(now())
+  paymentMethod  String
+  notes          String?
+  createdAt      DateTime @default(now())
 
-  supplier Supplier         @relation(fields: [supplierId], references: [id])
-  invoice  SupplierInvoice? @relation(fields: [invoiceId], references: [id], onDelete: SetNull)
+  organization Organization     @relation(fields: [organizationId], references: [id])
+  supplier     Supplier         @relation(fields: [supplierId], references: [id])
+  invoice      SupplierInvoice? @relation(fields: [invoiceId], references: [id], onDelete: SetNull)
 
-  @@index([supplierId])
+  @@index([organizationId, supplierId])
   @@index([date])
   @@map("supplier_payments")
 }
 
 model Employee {
-  id          String    @id @default(cuid())
-  firstName   String
-  lastName    String
-  role        String?
-  hourlyRate  Decimal   @default(0)
-  phone       String?
-  email       String?
-  isActive    Boolean   @default(true)
-  createdAt   DateTime  @default(now())
-  updatedAt   DateTime  @updatedAt
+  id             String    @id @default(cuid())
+  organizationId String    @map("organization_id")
+  firstName      String
+  lastName       String
+  role           String?
+  hourlyRate     Decimal   @default(0)
+  phone          String?
+  email          String?
+  isActive       Boolean   @default(true)
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
 
+  organization  Organization   @relation(fields: [organizationId], references: [id])
   timeLogs      TimeLog[]
   user          User?
   workSchedules WorkSchedule[]
   restDays      RestDay[]
 
-  @@index([isActive])
+  @@index([organizationId, isActive])
   @@map("employees")
 }
 
 model TimeLog {
-  id          String    @id @default(cuid())
-  employeeId  String
-  checkIn     DateTime
-  checkOut    DateTime?
-  duration    Decimal?
-  notes       String?
-  createdAt   DateTime  @default(now())
-  updatedAt   DateTime  @updatedAt
+  id             String    @id @default(cuid())
+  organizationId String    @map("organization_id")
+  employeeId     String
+  checkIn        DateTime
+  checkOut       DateTime?
+  duration       Decimal?
+  notes          String?
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
 
-  employee    Employee  @relation(fields: [employeeId], references: [id])
+  organization Organization @relation(fields: [organizationId], references: [id])
+  employee     Employee     @relation(fields: [employeeId], references: [id])
 
-  @@index([employeeId, checkIn])
+  @@index([organizationId, employeeId, checkIn])
   @@map("time_logs")
+}
+
+model WorkSchedule {
+  id             String @id @default(cuid())
+  organizationId String @map("organization_id")
+  employeeId     String
+  dayOfWeek      Int
+  shiftIndex     Int    @default(0)
+  startTime      String
+  endTime        String
+
+  organization Organization @relation(fields: [organizationId], references: [id])
+  employee     Employee     @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+
+  @@unique([employeeId, dayOfWeek, shiftIndex])
+  @@index([organizationId, employeeId])
+  @@map("work_schedules")
+}
+
+model RestDay {
+  id             String @id @default(cuid())
+  organizationId String @map("organization_id")
+  employeeId     String
+  date           String
+  notes          String?
+
+  organization Organization @relation(fields: [organizationId], references: [id])
+  employee     Employee     @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+
+  @@unique([employeeId, date])
+  @@index([organizationId, employeeId])
+  @@index([date])
+  @@map("rest_days")
 }
 
 // ── Preparaciones ─────────────────────────────────────────────────────────────
 
 model Preparation {
-  id        String   @id @default(cuid())
-  name      String
-  unit      String
-  yieldQty  Decimal  @default(1)
-  onHand    Decimal  @default(0)
-  costPrice Decimal  @default(0)
-  notes     String?
-  isActive  Boolean  @default(true)
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  id             String   @id @default(cuid())
+  organizationId String   @map("organization_id")
+  name           String
+  unit           String
+  yieldQty       Decimal  @default(1)
+  wastagePct     Decimal  @default(0) @map("wastage_pct")
+  onHand         Decimal  @default(0)
+  costPrice      Decimal  @default(0)
+  notes          String?
+  isActive       Boolean  @default(true)
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
 
+  organization       Organization            @relation(fields: [organizationId], references: [id])
   ingredients        PreparationIngredient[]
   subPreparations    PreparationSubPrep[]    @relation("ParentPrep")
   usedInPreparations PreparationSubPrep[]    @relation("SubPrep")
   productBOMLinks    ProductPreparation[]
   movements          PreparationMovement[]
 
-  @@index([isActive])
+  @@index([organizationId, isActive])
   @@map("preparations")
 }
 
@@ -374,16 +538,18 @@ model PreparationIngredient {
 }
 
 model PreparationMovement {
-  id            String   @id @default(cuid())
-  preparationId String
-  type          String   // PRODUCE | SALE | ADJUST
-  delta         Decimal
-  reason        String?
-  createdAt     DateTime @default(now())
+  id             String   @id @default(cuid())
+  organizationId String   @map("organization_id")
+  preparationId  String
+  type           String
+  delta          Decimal
+  reason         String?
+  createdAt      DateTime @default(now())
 
-  preparation Preparation @relation(fields: [preparationId], references: [id])
+  organization Organization @relation(fields: [organizationId], references: [id])
+  preparation  Preparation  @relation(fields: [preparationId], references: [id])
 
-  @@index([preparationId, type])
+  @@index([organizationId, preparationId, type])
   @@map("preparation_movements")
 }
 
@@ -404,20 +570,23 @@ model ProductPreparation {
 // ── Combos ────────────────────────────────────────────────────────────────────
 
 model Combo {
-  id        String   @id @default(cuid())
-  name      String
-  sku       String?  @unique
-  salePrice Decimal  @default(0)
-  currency  String   @default("ARS")
-  isActive  Boolean  @default(true)
-  notes     String?
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  id             String   @id @default(cuid())
+  organizationId String   @map("organization_id")
+  name           String
+  sku            String?
+  salePrice      Decimal  @default(0)
+  currency       String   @default("ARS")
+  isActive       Boolean  @default(true)
+  notes          String?
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
 
-  products   ComboProduct[]
-  saleCombos SaleCombo[]
+  organization Organization   @relation(fields: [organizationId], references: [id])
+  products     ComboProduct[]
+  saleCombos   SaleCombo[]
 
-  @@index([isActive])
+  @@unique([sku, organizationId])
+  @@index([organizationId, isActive])
   @@map("combos")
 }
 
@@ -450,48 +619,24 @@ model SaleCombo {
 // ── Users / Auth ───────────────────────────────────────────────────────────────
 
 model User {
-  id         String   @id @default(cuid())
-  username   String   @unique
-  password   String   // bcryptjs hash
-  role       String   @default("EMPLEADO") // ADMIN | ENCARGADO | CAJERA | EMPLEADO
-  isActive   Boolean  @default(true)
-  employeeId String?  @unique
-  createdAt  DateTime @default(now())
-  updatedAt  DateTime @updatedAt
+  id             String   @id @default(cuid())
+  username       String   @unique
+  password       String
+  role           String   @default("EMPLEADO") // SUPERADMIN | ADMIN | ENCARGADO | CAJERA | EMPLEADO
+  isActive       Boolean  @default(true)
+  organizationId String?  @map("organization_id") // null = SUPERADMIN
+  employeeId     String?  @unique
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
 
-  employee Employee? @relation(fields: [employeeId], references: [id], onDelete: SetNull)
+  organization Organization? @relation(fields: [organizationId], references: [id])
+  employee     Employee?     @relation(fields: [employeeId], references: [id], onDelete: SetNull)
 
   @@index([username])
+  @@index([organizationId])
   @@map("users")
 }
 
 // ── Schedules ─────────────────────────────────────────────────────────────────
 
-model WorkSchedule {
-  id         String   @id @default(cuid())
-  employeeId String
-  dayOfWeek  Int      // 0=Sun, 1=Mon, 2=Tue, 3=Wed, 4=Thu, 5=Fri, 6=Sat
-  shiftIndex Int      @default(0) // 0 = primer turno, 1 = segundo turno
-  startTime  String   // "HH:MM"
-  endTime    String   // "HH:MM"
-
-  employee   Employee @relation(fields: [employeeId], references: [id], onDelete: Cascade)
-
-  @@unique([employeeId, dayOfWeek, shiftIndex])
-  @@index([employeeId])
-  @@map("work_schedules")
-}
-
-model RestDay {
-  id         String   @id @default(cuid())
-  employeeId String
-  date       String   // "YYYY-MM-DD"
-  notes      String?
-
-  employee   Employee @relation(fields: [employeeId], references: [id], onDelete: Cascade)
-
-  @@unique([employeeId, date])
-  @@index([employeeId])
-  @@index([date])
-  @@map("rest_days")
-}
+// WorkSchedule and RestDay already defined above with organizationId

@@ -4,6 +4,7 @@ import { UpdateProductSchema } from "@/lib/validators";
 import { ZodError } from "zod";
 import { convertUnit } from "@/utils/units";
 import type { Unit } from "@/types";
+import { requireOrg } from "@/lib/requireOrg";
 
 type Params = { params: { id: string } };
 
@@ -49,10 +50,13 @@ const PRODUCT_INCLUDE = {
   preparations: { include: { preparation: { select: { id: true, name: true, unit: true } } } },
 };
 
-export async function GET(_: NextRequest, { params }: Params) {
+export async function GET(req: NextRequest, { params }: Params) {
+  let orgId: string;
+  try { orgId = requireOrg(req); } catch (e) { return e as Response; }
+
   try {
     const product = await prisma.product.findUnique({
-      where: { id: params.id },
+      where: { id: params.id, organizationId: orgId },
       include: PRODUCT_INCLUDE,
     });
     if (!product) {
@@ -64,7 +68,9 @@ export async function GET(_: NextRequest, { params }: Params) {
   }
 }
 
-export async function PUT(req: NextRequest, { params }: Params) {
+export async function PUT(req: NextRequest, { params }: Params) {  let orgId: string;
+  try { orgId = requireOrg(req); } catch (e) { return e as Response; }
+
   try {
     const body = await req.json();
     const { ingredients, preparations, ...productData } = UpdateProductSchema.parse(body);
@@ -73,7 +79,7 @@ export async function PUT(req: NextRequest, { params }: Params) {
     let costPrice: number | undefined;
     if (ingredients !== undefined || preparations !== undefined) {
       const current = await prisma.product.findUnique({
-        where: { id: params.id },
+        where: { id: params.id, organizationId: orgId },
         include: { ingredients: true, preparations: true },
       });
       const finalIngredients = ingredients ?? (current?.ingredients.map((i) => ({
@@ -94,7 +100,7 @@ export async function PUT(req: NextRequest, { params }: Params) {
       }
 
       const updated = await tx.product.update({
-        where: { id: params.id },
+        where: { id: params.id, organizationId: orgId },
         data: {
           ...productData,
           ...(costPrice !== undefined ? { costPrice } : {}),
@@ -138,10 +144,13 @@ export async function PUT(req: NextRequest, { params }: Params) {
   }
 }
 
-export async function DELETE(_: NextRequest, { params }: Params) {
+export async function DELETE(req: NextRequest, { params }: Params) {
+  let orgId: string;
+  try { orgId = requireOrg(req); } catch (e) { return e as Response; }
+
   try {
     await prisma.product.update({
-      where: { id: params.id },
+      where: { id: params.id, organizationId: orgId },
       data: { isActive: false },
     });
     return NextResponse.json({ success: true });

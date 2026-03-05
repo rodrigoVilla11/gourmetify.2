@@ -1,10 +1,13 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { format, getDay, getHours, startOfMonth, endOfDay } from "date-fns";
+import { requireOrg } from "@/lib/requireOrg";
 
 const DOW_LABELS = ["Dom", "Lun", "Mar", "Mié", "Jue", "Vie", "Sáb"];
 
-export async function GET(req: NextRequest) {
+export async function GET(req: NextRequest) {  let orgId: string;
+  try { orgId = requireOrg(req); } catch (e) { return e as Response; }
+
   try {
     const { searchParams } = new URL(req.url);
     const fromParam = searchParams.get("from");
@@ -15,7 +18,7 @@ export async function GET(req: NextRequest) {
     const end = toParam ? new Date(toParam + "T23:59:59.999Z") : endOfDay(today);
 
     const sales = await prisma.sale.findMany({
-      where: { date: { gte: start, lte: end } },
+      where: { organizationId: orgId, date: { gte: start, lte: end } },
       select: {
         date: true,
         total: true,

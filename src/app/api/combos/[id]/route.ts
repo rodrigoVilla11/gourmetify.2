@@ -2,13 +2,17 @@ import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { UpdateComboSchema } from "@/lib/validators";
 import { ZodError } from "zod";
+import { requireOrg } from "@/lib/requireOrg";
 
 type Params = { params: { id: string } };
 
-export async function GET(_: NextRequest, { params }: Params) {
+export async function GET(req: NextRequest, { params }: Params) {
+  let orgId: string;
+  try { orgId = requireOrg(req); } catch (e) { return e as Response; }
+
   try {
     const combo = await prisma.combo.findUnique({
-      where: { id: params.id },
+      where: { id: params.id, organizationId: orgId },
       include: {
         products: {
           include: {
@@ -31,7 +35,9 @@ export async function GET(_: NextRequest, { params }: Params) {
   }
 }
 
-export async function PUT(req: NextRequest, { params }: Params) {
+export async function PUT(req: NextRequest, { params }: Params) {  let orgId: string;
+  try { orgId = requireOrg(req); } catch (e) { return e as Response; }
+
   try {
     const body = await req.json();
     const { products, ...comboData } = UpdateComboSchema.parse(body);
@@ -42,7 +48,7 @@ export async function PUT(req: NextRequest, { params }: Params) {
       }
 
       const updated = await tx.combo.update({
-        where: { id: params.id },
+        where: { id: params.id, organizationId: orgId },
         data: {
           ...comboData,
           sku: comboData.sku === undefined ? undefined : comboData.sku || null,
@@ -75,10 +81,13 @@ export async function PUT(req: NextRequest, { params }: Params) {
   }
 }
 
-export async function DELETE(_: NextRequest, { params }: Params) {
+export async function DELETE(req: NextRequest, { params }: Params) {
+  let orgId: string;
+  try { orgId = requireOrg(req); } catch (e) { return e as Response; }
+
   try {
     await prisma.combo.update({
-      where: { id: params.id },
+      where: { id: params.id, organizationId: orgId },
       data: { isActive: false },
     });
     return NextResponse.json({ success: true });

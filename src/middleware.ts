@@ -7,19 +7,27 @@ const SECRET = new TextEncoder().encode(
 const COOKIE_NAME = "sq_token";
 
 // Prefixes that require no authentication
-const PUBLIC_PREFIXES = ["/login", "/setup", "/api/auth/"];
+const PUBLIC_PREFIXES = ["/login", "/setup", "/api/auth/", "/menu", "/api/public/"];
 
 // Page-level access for restricted roles (CAJERA and EMPLEADO)
-// ADMIN and ENCARGADO bypass these checks entirely
 const CAJERA_PAGE_PREFIXES = [
   "/fichador",
   "/caja-diaria",
   "/facturas-proveedores",
   "/comandas",
   "/sales",
+  "/cocina",
+  "/repartidores",
 ];
 
-const EMPLEADO_PAGE_PREFIXES = ["/fichador"];
+const EMPLEADO_PAGE_PREFIXES = ["/fichador", "/cocina"];
+
+// Pages NOT accessible to SUPERADMIN (they manage orgs, not business data)
+const BUSINESS_PAGE_PREFIXES = [
+  "/sales", "/comandas", "/products", "/ingredients", "/suppliers",
+  "/employees", "/fichador", "/caja", "/gastos", "/resultados",
+  "/analytics", "/clientes", "/horarios", "/preparaciones", "/combos",
+];
 
 export const config = {
   matcher: ["/((?!_next/static|_next/image|favicon.ico).*)"],
@@ -36,11 +44,11 @@ export async function middleware(req: NextRequest) {
   const token = req.cookies.get(COOKIE_NAME)?.value;
   const isApiRoute = pathname.startsWith("/api/");
 
-  let session: { role: string } | null = null;
+  let session: { role: string; organizationId?: string | null; plan?: string; planExpiresAt?: string | null } | null = null;
   if (token) {
     try {
       const { payload } = await jwtVerify(token, SECRET);
-      session = payload as { role: string };
+      session = payload as { role: string; organizationId?: string | null; plan?: string; planExpiresAt?: string | null };
     } catch {
       session = null;
     }
@@ -57,10 +65,32 @@ export async function middleware(req: NextRequest) {
   }
 
   const role = session.role;
+  const organizationId = session.organizationId ?? null;
 
-  // ADMIN: full access
-  if (role === "ADMIN") {
+  // ── SUPERADMIN ─────────────────────────────────────────────────────────────
+  if (role === "SUPERADMIN") {
+    if (isApiRoute) return NextResponse.next();
+    // Redirect to admin panel for any non-admin page
+    if (!pathname.startsWith("/admin/")) {
+      return NextResponse.redirect(new URL("/admin/organizations", req.url));
+    }
     return NextResponse.next();
+  }
+
+  // ── All other roles: forward organizationId + plan as headers
+  const requestHeaders = new Headers(req.headers);
+  if (organizationId) {
+    requestHeaders.set("x-organization-id", organizationId);
+  }
+  // Propagate effective plan (FREE if expired)
+  const rawPlan = session.plan ?? "FREE";
+  const expiresAt = session.planExpiresAt;
+  const effectivePlan = !expiresAt || new Date() < new Date(expiresAt) ? rawPlan : "FREE";
+  requestHeaders.set("x-org-plan", effectivePlan);
+
+  // ── ADMIN: full access within their org ───────────────────────────────────
+  if (role === "ADMIN") {
+    return NextResponse.next({ request: { headers: requestHeaders } });
   }
 
   // Pages restricted to ADMIN only
@@ -72,33 +102,33 @@ export async function middleware(req: NextRequest) {
     return NextResponse.redirect(new URL("/", req.url));
   }
 
-  // ENCARGADO: full access except ADMIN-only pages (already checked above)
+  // ── ENCARGADO: full access except ADMIN-only pages ────────────────────────
   if (role === "ENCARGADO") {
-    return NextResponse.next();
+    return NextResponse.next({ request: { headers: requestHeaders } });
   }
 
-  // API routes: only check authentication (done above), skip role-based page restrictions
+  // API routes: skip page-level role restrictions
   if (isApiRoute) {
-    return NextResponse.next();
+    return NextResponse.next({ request: { headers: requestHeaders } });
   }
 
-  // CAJERA: allow only specific page prefixes
+  // ── CAJERA: allow only specific page prefixes ──────────────────────────────
   if (role === "CAJERA") {
     const allowed = CAJERA_PAGE_PREFIXES.some((p) => pathname.startsWith(p));
     if (!allowed) {
       return NextResponse.redirect(new URL("/comandas", req.url));
     }
-    return NextResponse.next();
+    return NextResponse.next({ request: { headers: requestHeaders } });
   }
 
-  // EMPLEADO: only fichador
+  // ── EMPLEADO: only fichador ────────────────────────────────────────────────
   if (role === "EMPLEADO") {
     const allowed = EMPLEADO_PAGE_PREFIXES.some((p) => pathname.startsWith(p));
     if (!allowed) {
       return NextResponse.redirect(new URL("/fichador", req.url));
     }
-    return NextResponse.next();
+    return NextResponse.next({ request: { headers: requestHeaders } });
   }
 
-  return NextResponse.next();
+  return NextResponse.next({ request: { headers: requestHeaders } });
 }

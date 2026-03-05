@@ -1,24 +1,27 @@
-import { NextResponse } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
+import { requireOrg } from "@/lib/requireOrg";
 
-export async function GET() {
+export async function GET(req: NextRequest) {
+  let orgId: string;
+  try { orgId = requireOrg(req); } catch (e) { return e as Response; }
   try {
     const startOfToday = new Date();
     startOfToday.setHours(0, 0, 0, 0);
 
     const [candidates, openLogs, pendingOrders] = await Promise.all([
       prisma.ingredient.findMany({
-        where: { isActive: true, minQty: { gt: 0 } },
+        where: { isActive: true, minQty: { gt: 0 }, organizationId: orgId },
         select: { id: true, name: true, onHand: true, minQty: true },
       }),
       prisma.timeLog.findMany({
-        where: { checkOut: null, checkIn: { lt: startOfToday } },
+        where: { checkOut: null, checkIn: { lt: startOfToday }, organizationId: orgId },
         include: { employee: { select: { firstName: true, lastName: true } } },
         orderBy: { checkIn: "asc" },
         take: 5,
       }),
       prisma.sale.findMany({
-        where: { orderStatus: "NUEVO" },
+        where: { orderStatus: "NUEVO", organizationId: orgId },
         select: { id: true, customerName: true, customer: { select: { name: true } } },
         orderBy: { date: "asc" },
         take: 10,

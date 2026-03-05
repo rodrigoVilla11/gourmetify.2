@@ -3,14 +3,18 @@ import { prisma } from "@/lib/prisma";
 import { getSession, hashPassword } from "@/lib/auth";
 import { CreateUserSchema } from "@/lib/validators";
 import { ZodError } from "zod";
+import { requireOrg, checkLimit } from "@/lib/requireOrg";
 
-export async function GET() {
+export async function GET(req: NextRequest) {
+  let orgId: string;
+  try { orgId = requireOrg(req); } catch (e) { return e as Response; }
   const session = await getSession();
   if (!session || session.role !== "ADMIN") {
     return NextResponse.json({ error: "No autorizado", code: "FORBIDDEN" }, { status: 403 });
   }
 
   const users = await prisma.user.findMany({
+    where: { organizationId: orgId },
     include: {
       employee: { select: { id: true, firstName: true, lastName: true } },
     },
@@ -20,7 +24,10 @@ export async function GET() {
   return NextResponse.json({ data: users });
 }
 
-export async function POST(req: NextRequest) {
+export async function POST(req: NextRequest) {  let orgId: string;
+  try { orgId = requireOrg(req); } catch (e) { return e as Response; }
+  try { await checkLimit(orgId, "users", req); } catch (e) { return e as Response; }
+
   const session = await getSession();
   if (!session || session.role !== "ADMIN") {
     return NextResponse.json({ error: "No autorizado", code: "FORBIDDEN" }, { status: 403 });
@@ -35,7 +42,7 @@ export async function POST(req: NextRequest) {
     const finalEmployeeId = rest.role === "ADMIN" ? null : (employeeId ?? null);
 
     const user = await prisma.user.create({
-      data: { ...rest, password: hashed, employeeId: finalEmployeeId },
+      data: { ...rest, password: hashed, employeeId: finalEmployeeId, organizationId: orgId },
       include: {
         employee: { select: { id: true, firstName: true, lastName: true } },
       },

@@ -1,7 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
+import { requireOrg } from "@/lib/requireOrg";
 
-export async function GET(req: NextRequest) {
+export async function GET(req: NextRequest) {  let orgId: string;
+  try { orgId = requireOrg(req); } catch (e) { return e as Response; }
+
   try {
     const { searchParams } = new URL(req.url);
     const from = searchParams.get("from");
@@ -14,24 +17,25 @@ export async function GET(req: NextRequest) {
 
     const [salesAgg, incomeRows, expenseRows, paymentsAgg, timeLogs, employees, salePayments, saleItems] =
       await Promise.all([
-        prisma.sale.aggregate({ _sum: { total: true }, where: { date: dateRange } }),
-        prisma.incomeEntry.findMany({ where: { date: dateRange } }),
-        prisma.expense.findMany({ include: { category: true }, where: { date: dateRange } }),
-        prisma.supplierPayment.aggregate({ _sum: { amount: true }, where: { date: dateRange } }),
+        prisma.sale.aggregate({ _sum: { total: true }, where: { organizationId: orgId, date: dateRange } }),
+        prisma.incomeEntry.findMany({ where: { organizationId: orgId, date: dateRange } }),
+        prisma.expense.findMany({ include: { category: true }, where: { organizationId: orgId, date: dateRange } }),
+        prisma.supplierPayment.aggregate({ _sum: { amount: true }, where: { organizationId: orgId, date: dateRange } }),
         prisma.timeLog.findMany({
-          where: { checkIn: dateRange, checkOut: { not: null } },
+          where: { organizationId: orgId, checkIn: dateRange, checkOut: { not: null } },
           select: { employeeId: true, duration: true },
         }),
         prisma.employee.findMany({
+          where: { organizationId: orgId },
           select: { id: true, firstName: true, lastName: true, hourlyRate: true },
         }),
         prisma.salePayment.groupBy({
           by: ["paymentMethod"],
           _sum: { amount: true },
-          where: { sale: { date: dateRange } },
+          where: { sale: { organizationId: orgId, date: dateRange } },
         }),
         prisma.saleItem.findMany({
-          where: { sale: { date: dateRange, orderStatus: { not: "CANCELADO" } } },
+          where: { sale: { organizationId: orgId, date: dateRange, orderStatus: { not: "CANCELADO" } } },
           select: { quantity: true, product: { select: { costPrice: true } } },
         }),
       ]);

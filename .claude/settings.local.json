@@ -11,7 +11,11 @@
       "Bash(npx prisma migrate dev --name combos_and_preparations)",
       "Bash(npm install bcryptjs jose)",
       "Bash(npm install --save-dev @types/bcryptjs)",
-      "Bash(npx prisma db push --skip-generate)"
+      "Bash(npx prisma db push --skip-generate)",
+      "Bash(npx prisma db execute --file ./prisma/migrations/add_plans.sql)",
+      "Bash(npx prisma generate)",
+      "Bash(npx prisma db execute --file prisma/migrations/add_org_config.sql)",
+      "Bash(npx prisma db execute --file prisma/migrations/fix_repartidores_columns.sql)"
     ]
   }
 }

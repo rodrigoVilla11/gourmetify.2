@@ -4,16 +4,19 @@ import { ProducePreparationSchema } from "@/lib/validators";
 import { ZodError } from "zod";
 import { convertUnit } from "@/utils/units";
 import type { Unit } from "@/types";
+import { requireOrg } from "@/lib/requireOrg";
 
 type Params = { params: { id: string } };
 
-export async function POST(req: NextRequest, { params }: Params) {
+export async function POST(req: NextRequest, { params }: Params) {  let orgId: string;
+  try { orgId = requireOrg(req); } catch (e) { return e as Response; }
+
   try {
     const body = await req.json();
     const { batches, notes } = ProducePreparationSchema.parse(body);
 
     const preparation = await prisma.preparation.findUnique({
-      where: { id: params.id, isActive: true },
+      where: { id: params.id, organizationId: orgId, isActive: true },
       include: {
         ingredients: { include: { ingredient: true } },
         subPreparations: { include: { subPrep: true } },
@@ -24,13 +27,25 @@ export async function POST(req: NextRequest, { params }: Params) {
       return NextResponse.json({ error: "Preparación no encontrada", code: "NOT_FOUND" }, { status: 404 });
     }
 
-    // Build deduction map for raw ingredients (same logic as sale BOM)
+    // When the preparation has output-side wastage (e.g. salmon trimming), the ingredient
+    // quantities are consumed at face value and the YIELD is reduced by the wastage %.
+    // When wastagePct == 0 the classic input-inflation logic applies (backward-compatible).
+    const hasOutputWastage = Number(preparation.wastagePct) > 0;
+
+    // Build deduction map for raw ingredients
     const deductionMap = new Map<string, { delta: number; name: string; unit: Unit; onHand: number }>();
 
     for (const bomItem of preparation.ingredients) {
-      const wastageMultiplier = 1 + Number(bomItem.wastagePct) / 100;
-      const effectiveQtyPerBatch = Number(bomItem.qty) * wastageMultiplier;
-      const totalInBomUnit = effectiveQtyPerBatch * batches;
+      let totalInBomUnit: number;
+      if (hasOutputWastage) {
+        // No BOM wastage inflation — ingredient consumed at stated quantity
+        totalInBomUnit = Number(bomItem.qty) * batches;
+      } else {
+        // Classic behavior: wastagePct inflates ingredient consumption
+        const wastageMultiplier = 1 + Number(bomItem.wastagePct) / 100;
+        totalInBomUnit = Number(bomItem.qty) * wastageMultiplier * batches;
+      }
+
       const ingredientBaseUnit = bomItem.ingredient.unit as Unit;
       const bomUnit = bomItem.unit as Unit;
       let totalInBaseUnit: number;
@@ -63,9 +78,14 @@ export async function POST(req: NextRequest, { params }: Params) {
     const subPrepDeductionMap = new Map<string, { delta: number; name: string; unit: Unit }>();
 
     for (const bomItem of preparation.subPreparations) {
-      const wastageMultiplier = 1 + Number(bomItem.wastagePct) / 100;
-      const effectiveQtyPerBatch = Number(bomItem.qty) * wastageMultiplier;
-      const totalInBomUnit = effectiveQtyPerBatch * batches;
+      let totalInBomUnit: number;
+      if (hasOutputWastage) {
+        totalInBomUnit = Number(bomItem.qty) * batches;
+      } else {
+        const wastageMultiplier = 1 + Number(bomItem.wastagePct) / 100;
+        totalInBomUnit = Number(bomItem.qty) * wastageMultiplier * batches;
+      }
+
       const subPrepBaseUnit = bomItem.subPrep.unit as Unit;
       const bomUnit = bomItem.unit as Unit;
       let totalInBaseUnit: number;
@@ -93,7 +113,11 @@ export async function POST(req: NextRequest, { params }: Params) {
       }
     }
 
-    const yieldTotal = Number(preparation.yieldQty) * batches;
+    // Yield: with output wastage → batches × (1 - wastagePct/100); otherwise classic
+    const yieldTotal = hasOutputWastage
+      ? batches * (1 - Number(preparation.wastagePct) / 100)
+      : Number(preparation.yieldQty) * batches;
+
     const reason = `Producción de ${preparation.name} (${batches} ${batches === 1 ? "tanda" : "tandas"})`;
 
     const result = await prisma.$transaction(async (tx) => {
@@ -101,12 +125,13 @@ export async function POST(req: NextRequest, { params }: Params) {
       const ingredientMovements = [];
       for (const [ingredientId, info] of Array.from(deductionMap.entries())) {
         await tx.ingredient.update({
-          where: { id: ingredientId },
+          where: { id: ingredientId, organizationId: orgId },
           data: { onHand: { decrement: info.delta } },
         });
         const movement = await tx.stockMovement.create({
           data: {
             ingredientId,
+            organizationId: orgId,
             type: "ADJUSTMENT",
             delta: -info.delta,
             reason,
@@ -119,12 +144,13 @@ export async function POST(req: NextRequest, { params }: Params) {
       const subPrepMovements = [];
       for (const [subPrepId, info] of Array.from(subPrepDeductionMap.entries())) {
         await tx.preparation.update({
-          where: { id: subPrepId },
+          where: { id: subPrepId, organizationId: orgId },
           data: { onHand: { decrement: info.delta } },
         });
         const movement = await tx.preparationMovement.create({
           data: {
             preparationId: subPrepId,
+            organizationId: orgId,
             type: "CONSUME",
             delta: -info.delta,
             reason,
@@ -135,7 +161,7 @@ export async function POST(req: NextRequest, { params }: Params) {
 
       // Add to preparation stock
       const updatedPrep = await tx.preparation.update({
-        where: { id: params.id },
+        where: { id: params.id, organizationId: orgId },
         data: { onHand: { increment: yieldTotal } },
       });
 
@@ -143,6 +169,7 @@ export async function POST(req: NextRequest, { params }: Params) {
       const prepMovement = await tx.preparationMovement.create({
         data: {
           preparationId: params.id,
+          organizationId: orgId,
           type: "PRODUCE",
           delta: yieldTotal,
           reason: notes ?? reason,

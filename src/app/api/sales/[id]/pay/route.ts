@@ -2,12 +2,15 @@ import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { PaySaleSchema } from "@/lib/validators";
 import { ZodError } from "zod";
+import { requireOrg } from "@/lib/requireOrg";
 
 type Params = { params: { id: string } };
 
-export async function POST(req: NextRequest, { params }: Params) {
+export async function POST(req: NextRequest, { params }: Params) {  let orgId: string;
+  try { orgId = requireOrg(req); } catch (e) { return e as Response; }
+
   try {
-    const sale = await prisma.sale.findUnique({ where: { id: params.id }, select: { id: true, isPaid: true } });
+    const sale = await prisma.sale.findUnique({ where: { id: params.id, organizationId: orgId }, select: { id: true, isPaid: true } });
     if (!sale) {
       return NextResponse.json({ error: "Venta no encontrada", code: "NOT_FOUND" }, { status: 404 });
     }
@@ -26,7 +29,7 @@ export async function POST(req: NextRequest, { params }: Params) {
         })),
       }),
       prisma.sale.update({
-        where: { id: params.id },
+        where: { id: params.id, organizationId: orgId },
         data: { isPaid: true },
       }),
     ]);

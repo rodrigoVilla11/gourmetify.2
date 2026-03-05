@@ -43,11 +43,13 @@ export default function DashboardPage() {
 
   useEffect(() => {
     fetch("/api/dashboard")
-      .then((r) => r.json())
-      .then((d) => {
-        setData(d);
-        setLoading(false);
-      });
+      .then(async (r) => {
+        if (r.status === 401) { window.location.href = "/login"; return null; }
+        if (!r.ok) return null;
+        return r.json();
+      })
+      .then((d) => { if (d) setData(d); setLoading(false); })
+      .catch(() => setLoading(false));
   }, []);
 
   if (loading) {
@@ -80,19 +82,19 @@ export default function DashboardPage() {
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
           <div className="bg-blue-50 rounded-xl p-3 text-center">
             <p className="text-xs text-blue-600 font-semibold uppercase tracking-wide">Nuevos</p>
-            <p className="text-3xl font-bold text-blue-700 mt-1">{data.kanbanCounts.NUEVO}</p>
+            <p className="text-3xl font-bold text-blue-700 mt-1">{data.kanbanCounts?.NUEVO ?? 0}</p>
           </div>
           <div className="bg-amber-50 rounded-xl p-3 text-center">
             <p className="text-xs text-amber-600 font-semibold uppercase tracking-wide">En prep.</p>
-            <p className="text-3xl font-bold text-amber-700 mt-1">{data.kanbanCounts.EN_PREPARACION}</p>
+            <p className="text-3xl font-bold text-amber-700 mt-1">{data.kanbanCounts?.EN_PREPARACION ?? 0}</p>
           </div>
           <div className="bg-emerald-50 rounded-xl p-3 text-center">
             <p className="text-xs text-emerald-600 font-semibold uppercase tracking-wide">Listos</p>
-            <p className="text-3xl font-bold text-emerald-700 mt-1">{data.kanbanCounts.LISTO}</p>
+            <p className="text-3xl font-bold text-emerald-700 mt-1">{data.kanbanCounts?.LISTO ?? 0}</p>
           </div>
           <div className="bg-gray-50 rounded-xl p-3 text-center">
             <p className="text-xs text-gray-500 font-semibold uppercase tracking-wide">Recaudado</p>
-            <p className="text-xl font-bold text-gray-900 mt-1">{fmt(data.todayRevenue)}</p>
+            <p className="text-xl font-bold text-gray-900 mt-1">{fmt(data.todayRevenue ?? 0)}</p>
           </div>
         </div>
       </div>

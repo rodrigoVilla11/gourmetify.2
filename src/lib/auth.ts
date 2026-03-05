@@ -9,13 +9,16 @@ const SECRET = new TextEncoder().encode(
 export const COOKIE_NAME = "sq_token";
 export const MAX_AGE = 60 * 60 * 24 * 7; // 7 días
 
-export type UserRole = "ADMIN" | "ENCARGADO" | "CAJERA" | "EMPLEADO";
+export type UserRole = "SUPERADMIN" | "ADMIN" | "ENCARGADO" | "CAJERA" | "EMPLEADO";
 
 export interface SessionPayload {
   sub: string;
   username: string;
   role: UserRole;
+  organizationId: string | null; // null = SUPERADMIN
   employeeId?: string;
+  plan?: "FREE" | "STARTER" | "PRO";
+  planExpiresAt?: string | null; // ISO string
 }
 
 export async function signToken(payload: SessionPayload): Promise<string> {

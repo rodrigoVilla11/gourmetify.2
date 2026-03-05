@@ -2,14 +2,18 @@ import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { CreateComboSchema } from "@/lib/validators";
 import { ZodError } from "zod";
+import { requireOrg, requireFeature } from "@/lib/requireOrg";
 
-export async function GET(req: NextRequest) {
+export async function GET(req: NextRequest) {  let orgId: string;
+  try { orgId = requireOrg(req); } catch (e) { return e as Response; }
+
   try {
     const { searchParams } = new URL(req.url);
     const isActive = searchParams.get("isActive");
 
     const combos = await prisma.combo.findMany({
       where: {
+        organizationId: orgId,
         ...(isActive !== null ? { isActive: isActive === "true" } : {}),
       },
       include: {
@@ -26,7 +30,10 @@ export async function GET(req: NextRequest) {
   }
 }
 
-export async function POST(req: NextRequest) {
+export async function POST(req: NextRequest) {  let orgId: string;
+  try { orgId = requireOrg(req); } catch (e) { return e as Response; }
+  try { requireFeature(req, "combos"); } catch (e) { return e as Response; }
+
   try {
     const body = await req.json();
     const { products, ...comboData } = CreateComboSchema.parse(body);
@@ -35,6 +42,7 @@ export async function POST(req: NextRequest) {
       const created = await tx.combo.create({
         data: {
           ...comboData,
+          organizationId: orgId,
           sku: comboData.sku || null,
           products: {
             create: products.map((item) => ({

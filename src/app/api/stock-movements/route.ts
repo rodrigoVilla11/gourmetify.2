@@ -1,7 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
+import { requireOrg } from "@/lib/requireOrg";
 
-export async function GET(req: NextRequest) {
+export async function GET(req: NextRequest) {  let orgId: string;
+  try { orgId = requireOrg(req); } catch (e) { return e as Response; }
+
   try {
     const { searchParams } = new URL(req.url);
     const ingredientId = searchParams.get("ingredientId");
@@ -10,6 +13,7 @@ export async function GET(req: NextRequest) {
 
     const movements = await prisma.stockMovement.findMany({
       where: {
+        organizationId: orgId,
         ...(ingredientId ? { ingredientId } : {}),
         ...(type ? { type } : {}),
       },

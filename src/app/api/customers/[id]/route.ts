@@ -1,13 +1,17 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { UpdateCustomerSchema } from "@/lib/validators";
+import { requireOrg } from "@/lib/requireOrg";
 
 type Params = { params: { id: string } };
 
-export async function GET(_: NextRequest, { params }: Params) {
+export async function GET(req: NextRequest, { params }: Params) {
+  let orgId: string;
+  try { orgId = requireOrg(req); } catch (e) { return e as Response; }
+
   try {
     const customer = await prisma.customer.findUnique({
-      where: { id: params.id },
+      where: { id: params.id, organizationId: orgId },
       include: {
         _count: { select: { sales: true } },
         sales: {
@@ -33,7 +37,9 @@ export async function GET(_: NextRequest, { params }: Params) {
   }
 }
 
-export async function PUT(req: NextRequest, { params }: Params) {
+export async function PUT(req: NextRequest, { params }: Params) {  let orgId: string;
+  try { orgId = requireOrg(req); } catch (e) { return e as Response; }
+
   try {
     const body = await req.json();
     const parsed = UpdateCustomerSchema.safeParse(body);
@@ -42,7 +48,7 @@ export async function PUT(req: NextRequest, { params }: Params) {
     }
     const data = { ...parsed.data, email: parsed.data.email === "" ? null : parsed.data.email };
     const customer = await prisma.customer.update({
-      where: { id: params.id },
+      where: { id: params.id, organizationId: orgId },
       data,
     });
     return NextResponse.json(customer);
@@ -58,9 +64,12 @@ export async function PUT(req: NextRequest, { params }: Params) {
   }
 }
 
-export async function DELETE(_: NextRequest, { params }: Params) {
+export async function DELETE(req: NextRequest, { params }: Params) {
+  let orgId: string;
+  try { orgId = requireOrg(req); } catch (e) { return e as Response; }
+
   try {
-    await prisma.customer.delete({ where: { id: params.id } });
+    await prisma.customer.delete({ where: { id: params.id, organizationId: orgId } });
     return NextResponse.json({ ok: true });
   } catch (e: unknown) {
     if ((e as { code?: string }).code === "P2025") {

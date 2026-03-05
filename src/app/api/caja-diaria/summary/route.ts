@@ -1,8 +1,11 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { buildCajaDiariaSummary } from "@/utils/cajaUtils";
+import { requireOrg } from "@/lib/requireOrg";
 
-export async function GET(req: NextRequest) {
+export async function GET(req: NextRequest) {  let orgId: string;
+  try { orgId = requireOrg(req); } catch (e) { return e as Response; }
+
   try {
     const { searchParams } = new URL(req.url);
     const sessionId = searchParams.get("sessionId");
@@ -14,7 +17,7 @@ export async function GET(req: NextRequest) {
       );
     }
 
-    const session = await prisma.cashSession.findUnique({ where: { id: sessionId } });
+    const session = await prisma.cashSession.findUnique({ where: { id: sessionId, organizationId: orgId } });
     if (!session) {
       return NextResponse.json({ error: "Sesión no encontrada", code: "NOT_FOUND" }, { status: 404 });
     }
@@ -24,7 +27,7 @@ export async function GET(req: NextRequest) {
       openedAt: session.openedAt,
       closedAt: session.closedAt,
       openingBalance: session.openingBalance,
-    });
+    }, orgId);
 
     return NextResponse.json(summary);
   } catch {

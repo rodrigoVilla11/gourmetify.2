@@ -4,6 +4,7 @@ import { CreatePreparationSchema } from "@/lib/validators";
 import { ZodError } from "zod";
 import { convertUnit } from "@/utils/units";
 import type { Unit } from "@/types";
+import { requireOrg, requireFeature } from "@/lib/requireOrg";
 
 function tryConvert(qty: number, from: string, to: string): number {
   try { return convertUnit(qty, from as Unit, to as Unit); } catch { return 0; }
@@ -45,13 +46,16 @@ async function computeCostPrice(
   return yieldQty > 0 ? totalBatchCost / yieldQty : 0;
 }
 
-export async function GET(req: NextRequest) {
+export async function GET(req: NextRequest) {  let orgId: string;
+  try { orgId = requireOrg(req); } catch (e) { return e as Response; }
+
   try {
     const { searchParams } = new URL(req.url);
     const isActive = searchParams.get("isActive");
 
     const preparations = await prisma.preparation.findMany({
       where: {
+        organizationId: orgId,
         ...(isActive !== null ? { isActive: isActive === "true" } : {}),
       },
       include: {
@@ -71,7 +75,10 @@ export async function GET(req: NextRequest) {
   }
 }
 
-export async function POST(req: NextRequest) {
+export async function POST(req: NextRequest) {  let orgId: string;
+  try { orgId = requireOrg(req); } catch (e) { return e as Response; }
+  try { requireFeature(req, "combos"); } catch (e) { return e as Response; }
+
   try {
     const body = await req.json();
     const { ingredients, subPreparations, ...prepData } = CreatePreparationSchema.parse(body);
@@ -82,6 +89,7 @@ export async function POST(req: NextRequest) {
       const created = await tx.preparation.create({
         data: {
           ...prepData,
+          organizationId: orgId,
           costPrice,
           ingredients: {
             create: ingredients.map((item) => ({

@@ -1,0 +1,2 @@
+ALTER TABLE "preparations"
+  ADD COLUMN IF NOT EXISTS "wastage_pct" DECIMAL(10,4) DEFAULT 0 NOT NULL;

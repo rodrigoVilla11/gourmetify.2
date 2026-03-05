@@ -2,13 +2,17 @@ import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { UpdateSupplierSchema } from "@/lib/validators";
 import { ZodError } from "zod";
+import { requireOrg } from "@/lib/requireOrg";
 
 type Params = { params: { id: string } };
 
-export async function GET(_: NextRequest, { params }: Params) {
+export async function GET(req: NextRequest, { params }: Params) {
+  let orgId: string;
+  try { orgId = requireOrg(req); } catch (e) { return e as Response; }
+
   try {
     const supplier = await prisma.supplier.findUnique({
-      where: { id: params.id },
+      where: { id: params.id, organizationId: orgId },
       include: {
         ingredients: { where: { isActive: true }, orderBy: { name: "asc" } },
         invoices: { orderBy: { date: "desc" } },
@@ -24,12 +28,14 @@ export async function GET(_: NextRequest, { params }: Params) {
   }
 }
 
-export async function PUT(req: NextRequest, { params }: Params) {
+export async function PUT(req: NextRequest, { params }: Params) {  let orgId: string;
+  try { orgId = requireOrg(req); } catch (e) { return e as Response; }
+
   try {
     const body = await req.json();
     const data = UpdateSupplierSchema.parse(body);
     const supplier = await prisma.supplier.update({
-      where: { id: params.id },
+      where: { id: params.id, organizationId: orgId },
       data,
     });
     return NextResponse.json(supplier);
@@ -41,14 +47,17 @@ export async function PUT(req: NextRequest, { params }: Params) {
   }
 }
 
-export async function DELETE(_: NextRequest, { params }: Params) {
+export async function DELETE(req: NextRequest, { params }: Params) {
+  let orgId: string;
+  try { orgId = requireOrg(req); } catch (e) { return e as Response; }
+
   try {
     // Disassociate ingredients before deleting
     await prisma.ingredient.updateMany({
-      where: { supplierId: params.id },
+      where: { supplierId: params.id, organizationId: orgId },
       data: { supplierId: null },
     });
-    await prisma.supplier.delete({ where: { id: params.id } });
+    await prisma.supplier.delete({ where: { id: params.id, organizationId: orgId } });
     return new NextResponse(null, { status: 204 });
   } catch {
     return NextResponse.json({ error: "Error al eliminar proveedor", code: "INTERNAL_ERROR" }, { status: 500 });

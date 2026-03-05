@@ -4,8 +4,12 @@ import { CreateIngredientSchema } from "@/lib/validators";
 import { ZodError } from "zod";
 import { Decimal } from "@prisma/client/runtime/library";
 import { buildExcel, excelResponse } from "@/utils/excel";
+import { requireOrg } from "@/lib/requireOrg";
 
 export async function GET(req: NextRequest) {
+  let orgId: string;
+  try { orgId = requireOrg(req); } catch (e) { return e as Response; }
+
   try {
     const { searchParams } = new URL(req.url);
     const isActive = searchParams.get("isActive");
@@ -14,6 +18,7 @@ export async function GET(req: NextRequest) {
 
     const ingredients = await prisma.ingredient.findMany({
       where: {
+        organizationId: orgId,
         ...(isActive !== null ? { isActive: isActive === "true" } : {}),
       },
       include: { supplier: { select: { id: true, name: true } } },
@@ -62,11 +67,14 @@ export async function GET(req: NextRequest) {
 }
 
 export async function POST(req: NextRequest) {
+  let orgId: string;
+  try { orgId = requireOrg(req); } catch (e) { return e as Response; }
+
   try {
     const body = await req.json();
     const data = CreateIngredientSchema.parse(body);
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const ingredient = await prisma.ingredient.create({ data: data as any });
+    const ingredient = await prisma.ingredient.create({ data: { ...(data as any), organizationId: orgId } });
     return NextResponse.json(ingredient, { status: 201 });
   } catch (e) {
     if (e instanceof ZodError) {

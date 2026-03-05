@@ -2,15 +2,18 @@ import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { CheckOutSchema } from "@/lib/validators";
 import { ZodError } from "zod";
+import { requireOrg } from "@/lib/requireOrg";
 
-export async function POST(req: NextRequest) {
+export async function POST(req: NextRequest) {  let orgId: string;
+  try { orgId = requireOrg(req); } catch (e) { return e as Response; }
+
   try {
     const body = await req.json();
     const { employeeId, notes } = CheckOutSchema.parse(body);
 
     // Find the open log for this employee
     const openLog = await prisma.timeLog.findFirst({
-      where: { employeeId, checkOut: null },
+      where: { organizationId: orgId, employeeId, checkOut: null },
     });
     if (!openLog) {
       return NextResponse.json(
@@ -24,7 +27,7 @@ export async function POST(req: NextRequest) {
     const durationHours = Math.round((durationMs / 3_600_000) * 100) / 100;
 
     const timeLog = await prisma.timeLog.update({
-      where: { id: openLog.id },
+      where: { id: openLog.id, organizationId: orgId },
       data: {
         checkOut,
         duration: durationHours,

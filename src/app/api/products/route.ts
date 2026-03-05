@@ -5,6 +5,7 @@ import { ZodError } from "zod";
 import { buildExcel, excelResponse } from "@/utils/excel";
 import { convertUnit } from "@/utils/units";
 import type { Unit } from "@/types";
+import { requireOrg, checkLimit } from "@/lib/requireOrg";
 
 function tryConvert(qty: number, from: string, to: string): number {
   try { return convertUnit(qty, from as Unit, to as Unit); } catch { return 0; }
@@ -42,7 +43,9 @@ async function computeProductCost(
   return total;
 }
 
-export async function GET(req: NextRequest) {
+export async function GET(req: NextRequest) {  let orgId: string;
+  try { orgId = requireOrg(req); } catch (e) { return e as Response; }
+
   try {
     const { searchParams } = new URL(req.url);
     const isActive = searchParams.get("isActive");
@@ -52,6 +55,7 @@ export async function GET(req: NextRequest) {
 
     const products = await prisma.product.findMany({
       where: {
+        organizationId: orgId,
         ...(isActive !== null ? { isActive: isActive === "true" } : {}),
         ...(categoryId ? { categoryId } : {}),
       },
@@ -90,7 +94,10 @@ export async function GET(req: NextRequest) {
   }
 }
 
-export async function POST(req: NextRequest) {
+export async function POST(req: NextRequest) {  let orgId: string;
+  try { orgId = requireOrg(req); } catch (e) { return e as Response; }
+  try { await checkLimit(orgId, "products", req); } catch (e) { return e as Response; }
+
   try {
     const body = await req.json();
     const { ingredients, preparations, ...productData } = CreateProductSchema.parse(body);
@@ -101,6 +108,7 @@ export async function POST(req: NextRequest) {
       const created = await tx.product.create({
         data: {
           ...productData,
+          organizationId: orgId,
           costPrice,
           ingredients: {
             create: ingredients.map((item) => ({

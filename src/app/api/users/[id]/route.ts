@@ -3,17 +3,20 @@ import { prisma } from "@/lib/prisma";
 import { getSession, hashPassword } from "@/lib/auth";
 import { UpdateUserSchema } from "@/lib/validators";
 import { ZodError } from "zod";
+import { requireOrg } from "@/lib/requireOrg";
 
 type Params = { params: { id: string } };
 
-export async function GET(_: NextRequest, { params }: Params) {
+export async function GET(req: NextRequest, { params }: Params) {
+  let orgId: string;
+  try { orgId = requireOrg(req); } catch (e) { return e as Response; }
   const session = await getSession();
   if (!session || session.role !== "ADMIN") {
     return NextResponse.json({ error: "No autorizado", code: "FORBIDDEN" }, { status: 403 });
   }
 
   const user = await prisma.user.findUnique({
-    where: { id: params.id },
+    where: { id: params.id, organizationId: orgId },
     include: { employee: { select: { id: true, firstName: true, lastName: true } } },
   });
 
@@ -21,7 +24,9 @@ export async function GET(_: NextRequest, { params }: Params) {
   return NextResponse.json(user);
 }
 
-export async function PUT(req: NextRequest, { params }: Params) {
+export async function PUT(req: NextRequest, { params }: Params) {  let orgId: string;
+  try { orgId = requireOrg(req); } catch (e) { return e as Response; }
+
   const session = await getSession();
   if (!session || session.role !== "ADMIN") {
     return NextResponse.json({ error: "No autorizado", code: "FORBIDDEN" }, { status: 403 });
@@ -43,7 +48,7 @@ export async function PUT(req: NextRequest, { params }: Params) {
     }
 
     const user = await prisma.user.update({
-      where: { id: params.id },
+      where: { id: params.id, organizationId: orgId },
       data: updateData,
       include: { employee: { select: { id: true, firstName: true, lastName: true } } },
     });
@@ -60,7 +65,9 @@ export async function PUT(req: NextRequest, { params }: Params) {
   }
 }
 
-export async function DELETE(_: NextRequest, { params }: Params) {
+export async function DELETE(req: NextRequest, { params }: Params) {
+  let orgId: string;
+  try { orgId = requireOrg(req); } catch (e) { return e as Response; }
   const session = await getSession();
   if (!session || session.role !== "ADMIN") {
     return NextResponse.json({ error: "No autorizado", code: "FORBIDDEN" }, { status: 403 });
@@ -68,7 +75,7 @@ export async function DELETE(_: NextRequest, { params }: Params) {
 
   try {
     await prisma.user.update({
-      where: { id: params.id },
+      where: { id: params.id, organizationId: orgId },
       data: { isActive: false },
     });
     return NextResponse.json({ success: true });

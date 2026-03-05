@@ -1,10 +1,13 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { parseExcel } from "@/utils/excel";
+import { requireOrg } from "@/lib/requireOrg";
 
 const VALID_UNITS = ["KG", "G", "L", "ML", "UNIT"];
 
-export async function POST(req: NextRequest) {
+export async function POST(req: NextRequest) {  let orgId: string;
+  try { orgId = requireOrg(req); } catch (e) { return e as Response; }
+
   try {
     const formData = await req.formData();
     const file = formData.get("file") as File | null;
@@ -18,7 +21,7 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "El archivo no tiene datos", code: "VALIDATION_ERROR" }, { status: 400 });
     }
 
-    const suppliers = await prisma.supplier.findMany({ select: { id: true, name: true } });
+    const suppliers = await prisma.supplier.findMany({ where: { organizationId: orgId }, select: { id: true, name: true } });
 
     const dataRows = rows.slice(1);
     let created = 0;
@@ -54,13 +57,13 @@ export async function POST(req: NextRequest) {
 
       try {
         const existing = await prisma.ingredient.findFirst({
-          where: { name: { equals: name, mode: "insensitive" } },
+          where: { organizationId: orgId, name: { equals: name, mode: "insensitive" } },
         });
 
         if (existing) {
           const currentOnHand = Number(existing.onHand);
           await prisma.ingredient.update({
-            where: { id: existing.id },
+            where: { id: existing.id, organizationId: orgId },
             data: {
               unit: unitUpper as "KG" | "G" | "L" | "ML" | "UNIT",
               onHand,
@@ -76,6 +79,7 @@ export async function POST(req: NextRequest) {
             await prisma.stockMovement.create({
               data: {
                 ingredientId: existing.id,
+                organizationId: orgId,
                 type: "ADJUSTMENT",
                 delta,
                 reason: "Ajuste por reimportación Excel",
@@ -87,6 +91,7 @@ export async function POST(req: NextRequest) {
           const ingredient = await prisma.ingredient.create({
             data: {
               name,
+              organizationId: orgId,
               unit: unitUpper as "KG" | "G" | "L" | "ML" | "UNIT",
               onHand,
               minQty,
@@ -100,6 +105,7 @@ export async function POST(req: NextRequest) {
             await prisma.stockMovement.create({
               data: {
                 ingredientId: ingredient.id,
+                organizationId: orgId,
                 type: "ADJUSTMENT",
                 delta: onHand,
                 reason: "Stock inicial (importación Excel)",

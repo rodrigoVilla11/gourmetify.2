@@ -29,6 +29,8 @@ interface Product {
   categoryId: string | null;
   category: ProductCategory | null;
   isActive: boolean;
+  imageUrl: string | null;
+  description: string | null;
   ingredients: { ingredientId: string; qty: string; unit: Unit; wastagePct: string; ingredient: Ingredient }[];
   preparations: { preparationId: string; qty: string; unit: Unit; wastagePct: string; preparation: Preparation }[];
 }
@@ -38,6 +40,8 @@ interface ProductForm {
   salePrice: number;
   currency: Currency;
   categoryId?: string;
+  imageUrl?: string | null;
+  description?: string | null;
   ingredients: BOMEntry[];
   preparations: PrepBOMEntry[];
 }
@@ -59,6 +63,7 @@ export default function ProductsPage() {
   const [deletingId, setDeletingId] = useState<string | null>(null);
   const [isDeleting, setIsDeleting] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [uploadingImage, setUploadingImage] = useState(false);
   const [showInactive, setShowInactive] = useState(false);
   const [filterCategoryId, setFilterCategoryId] = useState<string>("all");
 
@@ -100,7 +105,7 @@ export default function ProductsPage() {
 
   const openCreate = () => {
     setEditingItem(null);
-    reset({ name: "", sku: "", salePrice: 0, currency: "ARS", categoryId: "", ingredients: [], preparations: [] });
+    reset({ name: "", sku: "", salePrice: 0, currency: "ARS", categoryId: "", imageUrl: null, description: null, ingredients: [], preparations: [] });
     setIsModalOpen(true);
   };
 
@@ -112,6 +117,8 @@ export default function ProductsPage() {
       salePrice: parseFloat(p.salePrice),
       currency: p.currency,
       categoryId: p.categoryId ?? "",
+      imageUrl: p.imageUrl ?? null,
+      description: p.description ?? null,
       ingredients: p.ingredients.map((b) => ({
         ingredientId: b.ingredientId,
         qty: parseFloat(b.qty),
@@ -128,9 +135,25 @@ export default function ProductsPage() {
     setIsModalOpen(true);
   };
 
+  const handleImageUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setUploadingImage(true);
+    try {
+      const fd = new FormData();
+      fd.append("file", file);
+      const res = await fetch("/api/upload?folder=productos", { method: "POST", body: fd });
+      const { url } = await res.json();
+      if (url) setValue("imageUrl", url);
+    } finally {
+      setUploadingImage(false);
+      e.target.value = "";
+    }
+  };
+
   const onSubmit = async (data: ProductForm) => {
     setSaving(true);
-    const body = { ...data, sku: data.sku || null, categoryId: data.categoryId || null };
+    const body = { ...data, sku: data.sku || null, categoryId: data.categoryId || null, imageUrl: data.imageUrl || null, description: data.description || null };
     try {
       if (editingItem) {
         await fetch(`/api/products/${editingItem.id}`, {
@@ -212,6 +235,7 @@ export default function ProductsPage() {
   const watchedIngredients = watch("ingredients");
   const watchedPreparations = watch("preparations");
   const watchedSalePrice = watch("salePrice");
+  const watchedImageUrl = watch("imageUrl");
 
   const computedCost = (() => {
     let total = 0;
@@ -244,6 +268,9 @@ export default function ProductsPage() {
       header: "Nombre",
       render: (p) => (
         <div className="flex items-center gap-2 flex-wrap">
+          {p.imageUrl && (
+            <img src={p.imageUrl} alt={p.name} className="w-8 h-8 rounded object-cover flex-shrink-0" />
+          )}
           <span className="font-medium">{p.name}</span>
           {p.sku && <span className="text-xs text-gray-400">{p.sku}</span>}
           {p.category && (
@@ -387,6 +414,42 @@ export default function ProductsPage() {
                 <option key={cat.id} value={cat.id}>{cat.name}</option>
               ))}
             </Select>
+          </div>
+
+          {/* Description + Image */}
+          <div className="space-y-3">
+            <div>
+              <label className="block text-xs font-medium text-gray-700 mb-1">Descripción (para el menú)</label>
+              <textarea
+                {...register("description")}
+                rows={2}
+                placeholder="Ej: Hamburguesa con queso cheddar, lechuga y tomate..."
+                className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 resize-none"
+              />
+            </div>
+            <div>
+              <label className="block text-xs font-medium text-gray-700 mb-1">Imagen</label>
+              <div className="flex items-center gap-3">
+                <input
+                  {...register("imageUrl")}
+                  type="url"
+                  placeholder="https://..."
+                  className="flex-1 rounded-lg border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                />
+                <label className="cursor-pointer">
+                  <span className={`inline-flex items-center px-3 py-2 rounded-lg border border-gray-300 text-sm font-medium text-gray-700 bg-white hover:bg-gray-50 transition-colors ${uploadingImage ? "opacity-50 cursor-not-allowed" : ""}`}>
+                    {uploadingImage ? "Subiendo..." : "Subir imagen"}
+                  </span>
+                  <input type="file" accept="image/*" className="hidden" onChange={handleImageUpload} disabled={uploadingImage} />
+                </label>
+              </div>
+              {watchedImageUrl && (
+                <div className="mt-2 flex items-center gap-2">
+                  <img src={watchedImageUrl} alt="preview" className="w-16 h-16 rounded-lg object-cover border border-gray-200" />
+                  <button type="button" onClick={() => setValue("imageUrl", null)} className="text-xs text-red-500 hover:text-red-700">Quitar imagen</button>
+                </div>
+              )}
+            </div>
           </div>
 
           {/* BOM */}

@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { z } from "zod";
 import { ZodError } from "zod";
+import { requireOrg } from "@/lib/requireOrg";
 
 const CreateRestDaySchema = z.object({
   employeeId: z.string().min(1),
@@ -10,7 +11,9 @@ const CreateRestDaySchema = z.object({
 });
 
 // GET /api/rest-days?employeeId=&from=&to=
-export async function GET(req: NextRequest) {
+export async function GET(req: NextRequest) {  let orgId: string;
+  try { orgId = requireOrg(req); } catch (e) { return e as Response; }
+
   try {
     const { searchParams } = new URL(req.url);
     const employeeId = searchParams.get("employeeId");
@@ -18,6 +21,7 @@ export async function GET(req: NextRequest) {
     const to = searchParams.get("to");
 
     const where = {
+      organizationId: orgId,
       ...(employeeId ? { employeeId } : {}),
       ...(from || to
         ? {
@@ -44,19 +48,21 @@ export async function GET(req: NextRequest) {
 }
 
 // POST /api/rest-days
-export async function POST(req: NextRequest) {
+export async function POST(req: NextRequest) {  let orgId: string;
+  try { orgId = requireOrg(req); } catch (e) { return e as Response; }
+
   try {
     const body = await req.json();
     const { employeeId, date, notes } = CreateRestDaySchema.parse(body);
 
     // Check employee exists
-    const employee = await prisma.employee.findUnique({ where: { id: employeeId } });
+    const employee = await prisma.employee.findUnique({ where: { id: employeeId, organizationId: orgId } });
     if (!employee) {
       return NextResponse.json({ error: "Empleado no encontrado", code: "NOT_FOUND" }, { status: 404 });
     }
 
     const restDay = await prisma.restDay.create({
-      data: { employeeId, date, notes },
+      data: { organizationId: orgId, employeeId, date, notes },
       include: { employee: { select: { id: true, firstName: true, lastName: true } } },
     });
 

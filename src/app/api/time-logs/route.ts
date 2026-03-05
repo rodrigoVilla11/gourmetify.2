@@ -2,8 +2,11 @@ import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { CreateTimeLogSchema } from "@/lib/validators";
 import { ZodError } from "zod";
+import { requireOrg } from "@/lib/requireOrg";
 
-export async function GET(req: NextRequest) {
+export async function GET(req: NextRequest) {  let orgId: string;
+  try { orgId = requireOrg(req); } catch (e) { return e as Response; }
+
   try {
     const { searchParams } = new URL(req.url);
     const employeeId = searchParams.get("employeeId");
@@ -15,6 +18,7 @@ export async function GET(req: NextRequest) {
     const skip = (page - 1) * limit;
 
     const where = {
+      organizationId: orgId,
       ...(employeeId ? { employeeId } : {}),
       ...(from || to
         ? {
@@ -44,13 +48,15 @@ export async function GET(req: NextRequest) {
   }
 }
 
-export async function POST(req: NextRequest) {
+export async function POST(req: NextRequest) {  let orgId: string;
+  try { orgId = requireOrg(req); } catch (e) { return e as Response; }
+
   try {
     const body = await req.json();
     const { employeeId, notes } = CreateTimeLogSchema.parse(body);
 
     // Verify employee exists and is active
-    const employee = await prisma.employee.findUnique({ where: { id: employeeId } });
+    const employee = await prisma.employee.findUnique({ where: { id: employeeId, organizationId: orgId } });
     if (!employee || !employee.isActive) {
       return NextResponse.json({ error: "Empleado no encontrado o inactivo", code: "NOT_FOUND" }, { status: 404 });
     }
@@ -62,11 +68,11 @@ export async function POST(req: NextRequest) {
 
     const [daySchedules, restDay] = await Promise.all([
       prisma.workSchedule.findMany({
-        where: { employeeId, dayOfWeek },
+        where: { organizationId: orgId, employeeId, dayOfWeek },
         orderBy: { shiftIndex: "asc" },
       }),
-      prisma.restDay.findUnique({
-        where: { employeeId_date: { employeeId, date: dateStr } },
+      prisma.restDay.findFirst({
+        where: { organizationId: orgId, employeeId, date: dateStr },
       }),
     ]);
 
@@ -101,7 +107,7 @@ export async function POST(req: NextRequest) {
 
     // Check for existing open log
     const openLog = await prisma.timeLog.findFirst({
-      where: { employeeId, checkOut: null },
+      where: { organizationId: orgId, employeeId, checkOut: null },
     });
     if (openLog) {
       return NextResponse.json(
@@ -111,7 +117,7 @@ export async function POST(req: NextRequest) {
     }
 
     const timeLog = await prisma.timeLog.create({
-      data: { employeeId, checkIn: new Date(), notes },
+      data: { organizationId: orgId, employeeId, checkIn: new Date(), notes },
       include: { employee: true },
     });
 

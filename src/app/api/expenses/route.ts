@@ -5,8 +5,11 @@ import { CreateExpenseSchema } from "@/lib/validators";
 import { ZodError } from "zod";
 import { buildExcel, excelResponse } from "@/utils/excel";
 import { format as fmtDate } from "date-fns";
+import { requireOrg, requireFeature } from "@/lib/requireOrg";
 
-export async function GET(req: NextRequest) {
+export async function GET(req: NextRequest) {  let orgId: string;
+  try { orgId = requireOrg(req); } catch (e) { return e as Response; }
+
   try {
     const { searchParams } = new URL(req.url);
     const from = searchParams.get("from");
@@ -19,6 +22,7 @@ export async function GET(req: NextRequest) {
     const skip = (page - 1) * limit;
 
     const where = {
+      organizationId: orgId,
       ...(from && to ? { date: { gte: new Date(from), lte: new Date(to + "T23:59:59.999Z") } } : {}),
       ...(categoryId ? { categoryId } : {}),
       ...(cashSessionId ? { cashSessionId } : {}),
@@ -63,13 +67,17 @@ export async function GET(req: NextRequest) {
   }
 }
 
-export async function POST(req: NextRequest) {
+export async function POST(req: NextRequest) {  let orgId: string;
+  try { orgId = requireOrg(req); } catch (e) { return e as Response; }
+  try { requireFeature(req, "financial"); } catch (e) { return e as Response; }
+
   try {
     const body = await req.json();
     const data = CreateExpenseSchema.parse(body);
 
     const expense = await prisma.expense.create({
       data: {
+        organizationId: orgId,
         amount: data.amount,
         currency: data.currency,
         date: data.date ? new Date(data.date) : new Date(),

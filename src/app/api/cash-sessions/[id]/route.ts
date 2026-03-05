@@ -2,12 +2,15 @@ import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { CloseCashSessionSchema } from "@/lib/validators";
 import { ZodError } from "zod";
+import { requireOrg } from "@/lib/requireOrg";
 
 type Params = { params: { id: string } };
 
-export async function GET(_: NextRequest, { params }: Params) {
+export async function GET(req: NextRequest, { params }: Params) {
+  let orgId: string;
+  try { orgId = requireOrg(req); } catch (e) { return e as Response; }
   try {
-    const session = await prisma.cashSession.findUnique({ where: { id: params.id } });
+    const session = await prisma.cashSession.findUnique({ where: { id: params.id, organizationId: orgId } });
     if (!session) return NextResponse.json({ error: "Sesión no encontrada", code: "NOT_FOUND" }, { status: 404 });
     return NextResponse.json(session);
   } catch {
@@ -15,16 +18,18 @@ export async function GET(_: NextRequest, { params }: Params) {
   }
 }
 
-export async function PATCH(req: NextRequest, { params }: Params) {
+export async function PATCH(req: NextRequest, { params }: Params) {  let orgId: string;
+  try { orgId = requireOrg(req); } catch (e) { return e as Response; }
+
   try {
-    const session = await prisma.cashSession.findUnique({ where: { id: params.id } });
+    const session = await prisma.cashSession.findUnique({ where: { id: params.id, organizationId: orgId } });
     if (!session) return NextResponse.json({ error: "Sesión no encontrada", code: "NOT_FOUND" }, { status: 404 });
     if (session.closedAt) return NextResponse.json({ error: "La sesión ya está cerrada", code: "CONFLICT" }, { status: 409 });
 
     const body = await req.json();
     const data = CloseCashSessionSchema.parse(body);
     const updated = await prisma.cashSession.update({
-      where: { id: params.id },
+      where: { id: params.id, organizationId: orgId },
       data: { closedAt: new Date(), closingBalance: data.closingBalance, notes: data.notes ?? session.notes },
     });
     return NextResponse.json(updated);

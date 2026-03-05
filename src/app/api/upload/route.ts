@@ -9,9 +9,10 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "Archivo no enviado", code: "VALIDATION_ERROR" }, { status: 400 });
     }
 
+    const folder = new URL(req.url).searchParams.get("folder") ?? "facturas";
     const bytes = await file.arrayBuffer();
     const buffer = Buffer.from(bytes);
-    const url = await uploadToCloudinary(buffer);
+    const url = await uploadToCloudinary(buffer, folder);
 
     return NextResponse.json({ url });
   } catch {

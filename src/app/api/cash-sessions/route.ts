@@ -2,12 +2,15 @@ import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { OpenCashSessionSchema } from "@/lib/validators";
 import { ZodError } from "zod";
+import { requireOrg, requireFeature } from "@/lib/requireOrg";
 
-export async function GET() {
+export async function GET(req: NextRequest) {
+  let orgId: string;
+  try { orgId = requireOrg(req); } catch (e) { return e as Response; }
   try {
     const [active, recent] = await prisma.$transaction([
-      prisma.cashSession.findFirst({ where: { closedAt: null }, orderBy: { openedAt: "desc" } }),
-      prisma.cashSession.findMany({ where: { closedAt: { not: null } }, orderBy: { openedAt: "desc" }, take: 10 }),
+      prisma.cashSession.findFirst({ where: { closedAt: null, organizationId: orgId }, orderBy: { openedAt: "desc" } }),
+      prisma.cashSession.findMany({ where: { closedAt: { not: null }, organizationId: orgId }, orderBy: { openedAt: "desc" }, take: 10 }),
     ]);
     return NextResponse.json({ active, recent });
   } catch {
@@ -15,9 +18,12 @@ export async function GET() {
   }
 }
 
-export async function POST(req: NextRequest) {
+export async function POST(req: NextRequest) {  let orgId: string;
+  try { orgId = requireOrg(req); } catch (e) { return e as Response; }
+  try { requireFeature(req, "financial"); } catch (e) { return e as Response; }
+
   try {
-    const existing = await prisma.cashSession.findFirst({ where: { closedAt: null } });
+    const existing = await prisma.cashSession.findFirst({ where: { closedAt: null, organizationId: orgId } });
     if (existing) {
       return NextResponse.json(
         { error: "Ya hay una caja abierta. Cerrala antes de abrir una nueva.", code: "CONFLICT" },
@@ -28,7 +34,7 @@ export async function POST(req: NextRequest) {
     const body = await req.json();
     const data = OpenCashSessionSchema.parse(body);
     const session = await prisma.cashSession.create({
-      data: { openingBalance: data.openingBalance, notes: data.notes ?? null },
+      data: { openingBalance: data.openingBalance, notes: data.notes ?? null, organizationId: orgId },
     });
     return NextResponse.json(session, { status: 201 });
   } catch (e) {

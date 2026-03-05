@@ -29,7 +29,7 @@ export async function buildCajaDiariaSummary(session: {
   openedAt: Date;
   closedAt: Date | null;
   openingBalance: number | string;
-}): Promise<CajaDiariaSummary> {
+}, orgId: string): Promise<CajaDiariaSummary> {
   const dateFilter = {
     gte: session.openedAt,
     lte: session.closedAt ?? new Date(),
@@ -37,11 +37,11 @@ export async function buildCajaDiariaSummary(session: {
 
   const [salePayments, expenses] = await Promise.all([
     prisma.salePayment.findMany({
-      where: { sale: { date: dateFilter } },
+      where: { sale: { organizationId: orgId, date: dateFilter } },
       select: { paymentMethod: true, amount: true },
     }),
     prisma.expense.findMany({
-      where: { cashSessionId: session.id },
+      where: { organizationId: orgId, cashSessionId: session.id },
       select: {
         amount: true,
         categoryId: true,
@@ -101,22 +101,22 @@ export async function buildCajaDiariaSummary(session: {
 // ── Caja general (period-based) ───────────────────────────────────────────────
 // Expenses linked to an OPEN session are excluded while the session is active.
 // Once the session closes they appear here automatically.
-export async function buildCajaSummary(from: Date, to: Date, openingBalance?: number): Promise<CajaSummary> {
+export async function buildCajaSummary(from: Date, to: Date, openingBalance?: number, orgId?: string): Promise<CajaSummary> {
   const dateFilter = { gte: from, lte: to };
 
   // Fetch open session IDs to exclude their expenses from the general view
   const [salePayments, incomeEntries, allExpenses, saleTotals, supplierPayments, openSessions] =
     await Promise.all([
       prisma.salePayment.findMany({
-        where: { sale: { date: dateFilter } },
+        where: { sale: { ...(orgId ? { organizationId: orgId } : {}), date: dateFilter } },
         select: { paymentMethod: true, amount: true },
       }),
       prisma.incomeEntry.findMany({
-        where: { date: dateFilter },
+        where: { ...(orgId ? { organizationId: orgId } : {}), date: dateFilter },
         select: { paymentMethod: true, amount: true },
       }),
       prisma.expense.findMany({
-        where: { date: dateFilter },
+        where: { ...(orgId ? { organizationId: orgId } : {}), date: dateFilter },
         select: {
           amount: true,
           categoryId: true,
@@ -125,15 +125,15 @@ export async function buildCajaSummary(from: Date, to: Date, openingBalance?: nu
         },
       }),
       prisma.sale.aggregate({
-        where: { date: dateFilter },
+        where: { ...(orgId ? { organizationId: orgId } : {}), date: dateFilter },
         _sum: { total: true },
       }),
       prisma.supplierPayment.findMany({
-        where: { date: dateFilter },
+        where: { ...(orgId ? { organizationId: orgId } : {}), date: dateFilter },
         select: { amount: true },
       }),
       prisma.cashSession.findMany({
-        where: { closedAt: null },
+        where: { ...(orgId ? { organizationId: orgId } : {}), closedAt: null },
         select: { id: true },
       }),
     ]);

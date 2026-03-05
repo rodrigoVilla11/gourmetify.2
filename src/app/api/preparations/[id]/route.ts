@@ -4,6 +4,7 @@ import { UpdatePreparationSchema } from "@/lib/validators";
 import { ZodError } from "zod";
 import { convertUnit } from "@/utils/units";
 import type { Unit } from "@/types";
+import { requireOrg } from "@/lib/requireOrg";
 
 type Params = { params: { id: string } };
 
@@ -47,10 +48,13 @@ async function computeCostPrice(
   return yieldQty > 0 ? totalBatchCost / yieldQty : 0;
 }
 
-export async function GET(_: NextRequest, { params }: Params) {
+export async function GET(req: NextRequest, { params }: Params) {
+  let orgId: string;
+  try { orgId = requireOrg(req); } catch (e) { return e as Response; }
+
   try {
     const preparation = await prisma.preparation.findUnique({
-      where: { id: params.id },
+      where: { id: params.id, organizationId: orgId },
       include: {
         ingredients: {
           include: { ingredient: { select: { id: true, name: true, unit: true } } },
@@ -70,7 +74,9 @@ export async function GET(_: NextRequest, { params }: Params) {
   }
 }
 
-export async function PUT(req: NextRequest, { params }: Params) {
+export async function PUT(req: NextRequest, { params }: Params) {  let orgId: string;
+  try { orgId = requireOrg(req); } catch (e) { return e as Response; }
+
   try {
     const body = await req.json();
     const { ingredients, subPreparations, ...prepData } = UpdatePreparationSchema.parse(body);
@@ -80,7 +86,7 @@ export async function PUT(req: NextRequest, { params }: Params) {
     if (ingredients !== undefined || subPreparations !== undefined) {
       // Fetch current BOM from DB for whichever side wasn't provided
       const current = await prisma.preparation.findUnique({
-        where: { id: params.id },
+        where: { id: params.id, organizationId: orgId },
         include: {
           ingredients: true,
           subPreparations: true,
@@ -105,7 +111,7 @@ export async function PUT(req: NextRequest, { params }: Params) {
       }
 
       const updated = await tx.preparation.update({
-        where: { id: params.id },
+        where: { id: params.id, organizationId: orgId },
         data: {
           ...prepData,
           ...(costPrice !== undefined ? { costPrice } : {}),
@@ -156,10 +162,13 @@ export async function PUT(req: NextRequest, { params }: Params) {
   }
 }
 
-export async function DELETE(_: NextRequest, { params }: Params) {
+export async function DELETE(req: NextRequest, { params }: Params) {
+  let orgId: string;
+  try { orgId = requireOrg(req); } catch (e) { return e as Response; }
+
   try {
     await prisma.preparation.update({
-      where: { id: params.id },
+      where: { id: params.id, organizationId: orgId },
       data: { isActive: false },
     });
     return NextResponse.json({ success: true });

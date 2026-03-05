@@ -2,8 +2,9 @@ import { NextRequest, NextResponse } from "next/server";
 import { revalidateTag } from "next/cache";
 import { prisma } from "@/lib/prisma";
 import { UpdateSaleStatusSchema } from "@/lib/validators";
-import { ZodError } from "zod";
+import { z, ZodError } from "zod";
 import { deductSaleStock, rollbackSaleStock } from "@/lib/saleStockUtils";
+import { requireOrg } from "@/lib/requireOrg";
 
 type Params = { params: { id: string } };
 
@@ -16,13 +17,15 @@ const VALID_TRANSITIONS: Record<string, string[]> = {
   CANCELADO:      [],
 };
 
-export async function POST(req: NextRequest, { params }: Params) {
+export async function POST(req: NextRequest, { params }: Params) {  let orgId: string;
+  try { orgId = requireOrg(req); } catch (e) { return e as Response; }
+
   try {
     const body = await req.json();
     const { status, rollbackStock } = UpdateSaleStatusSchema.parse(body);
 
     const sale = await prisma.sale.findUnique({
-      where: { id: params.id },
+      where: { id: params.id, organizationId: orgId },
       include: {
         items: { select: { productId: true, quantity: true } },
         combos: { select: { comboId: true, quantity: true } },
@@ -52,13 +55,13 @@ export async function POST(req: NextRequest, { params }: Params) {
     let warnings: unknown[] = [];
 
     await prisma.$transaction(async (tx) => {
-      await tx.sale.update({ where: { id: params.id }, data: updateData });
+      await tx.sale.update({ where: { id: params.id, organizationId: orgId }, data: updateData });
 
       if (status === "EN_PREPARACION") {
-        warnings = await deductSaleStock(tx, params.id, items, combos);
+        warnings = await deductSaleStock(tx, params.id, items, combos, orgId);
       }
 
-      if (status === "CANCELADO" && sale.orderStatus === "EN_PREPARACION" && rollbackStock) {
+      if (status === "CANCELADO" && (sale.orderStatus === "EN_PREPARACION" || sale.orderStatus === "LISTO") && rollbackStock) {
         await rollbackSaleStock(tx, params.id, items, combos);
       }
     });
@@ -70,6 +73,34 @@ export async function POST(req: NextRequest, { params }: Params) {
       return NextResponse.json({ error: e.issues[0].message, code: "VALIDATION_ERROR" }, { status: 400 });
     }
     console.error(e);
+    return NextResponse.json({ error: "Error interno", code: "INTERNAL_ERROR" }, { status: 500 });
+  }
+}
+
+// PUT — update delayMinutes only (kitchen monitor)
+const UpdateDelaySchema = z.object({
+  delayMinutes: z.number().int().min(0).max(480).nullable(),
+});
+
+export async function PUT(req: NextRequest, { params }: Params) {
+  let orgId: string;
+  try { orgId = requireOrg(req); } catch (e) { return e as Response; }
+
+  try {
+    const body = await req.json();
+    const { delayMinutes } = UpdateDelaySchema.parse(body);
+
+    const sale = await prisma.sale.update({
+      where: { id: params.id, organizationId: orgId },
+      data: { delayMinutes },
+      select: { id: true, delayMinutes: true },
+    });
+
+    return NextResponse.json(sale);
+  } catch (e) {
+    if (e instanceof ZodError) {
+      return NextResponse.json({ error: e.issues[0].message, code: "VALIDATION_ERROR" }, { status: 400 });
+    }
     return NextResponse.json({ error: "Error interno", code: "INTERNAL_ERROR" }, { status: 500 });
   }
 }

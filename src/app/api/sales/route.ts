@@ -5,14 +5,18 @@ import { CreateSaleSchema } from "@/lib/validators";
 import { ZodError } from "zod";
 import { buildExcel, excelResponse } from "@/utils/excel";
 import { format as fmtDate } from "date-fns";
+import { requireOrg } from "@/lib/requireOrg";
 
 export async function GET(req: NextRequest) {
+  let orgId: string;
+  try { orgId = requireOrg(req); } catch (e) { return e as Response; }
   try {
     const { searchParams } = new URL(req.url);
     const format = searchParams.get("format");
 
     if (format === "xlsx") {
       const sales = await prisma.sale.findMany({
+        where: { organizationId: orgId },
         include: { items: { include: { product: true } }, payments: true },
         orderBy: { date: "desc" },
       });
@@ -40,11 +44,13 @@ export async function GET(req: NextRequest) {
     const to = searchParams.get("to");
     const isPaidParam = searchParams.get("isPaid");
     const orderStatusParam = searchParams.get("orderStatus");
+    const orderTypeParam = searchParams.get("orderType");
     const page = Math.max(1, parseInt(searchParams.get("page") ?? "1"));
     const limit = Math.min(200, parseInt(searchParams.get("limit") ?? "20"));
     const skip = (page - 1) * limit;
 
     const where = {
+      organizationId: orgId,
       ...(from || to ? {
         date: {
           ...(from ? { gte: new Date(from) } : {}),
@@ -53,6 +59,7 @@ export async function GET(req: NextRequest) {
       } : {}),
       ...(isPaidParam !== null ? { isPaid: isPaidParam === "true" } : {}),
       ...(orderStatusParam ? { orderStatus: { in: orderStatusParam.split(",") } } : {}),
+      ...(orderTypeParam ? { orderType: orderTypeParam } : {}),
     };
 
     const [total, sales] = await prisma.$transaction([
@@ -69,10 +76,15 @@ export async function GET(req: NextRequest) {
           isPaid: true,
           orderType: true,
           orderStatus: true,
+          dailyOrderNumber: true,
           startedAt: true,
           readyAt: true,
           deliveredAt: true,
+          delayMinutes: true,
           deliveryAddress: true,
+          deliveryFee: true,
+          repartidorId: true,
+          repartidor: { select: { id: true, name: true } },
           customerId: true,
           customerName: true,
           customer: { select: { id: true, name: true, phone: true } },
@@ -80,6 +92,7 @@ export async function GET(req: NextRequest) {
             select: {
               productId: true,
               quantity: true,
+              isUnavailable: true,
               product: { select: { name: true } },
             },
           },
@@ -87,6 +100,7 @@ export async function GET(req: NextRequest) {
           combos: {
             select: {
               id: true,
+              comboId: true,
               quantity: true,
               price: true,
               combo: { select: { name: true } },
@@ -107,16 +121,18 @@ export async function GET(req: NextRequest) {
 }
 
 export async function POST(req: NextRequest) {
+  let orgId: string;
+  try { orgId = requireOrg(req); } catch (e) { return e as Response; }
   try {
     const body = await req.json();
-    const { date, notes, customerId, customerName, orderType, deliveryAddress, items, comboItems, payments } = CreateSaleSchema.parse(body);
+    const { date, notes, customerId, customerName, orderType, deliveryAddress, repartidorId, items, comboItems, payments } = CreateSaleSchema.parse(body);
     const isPaid = !!(payments && payments.length > 0);
 
     // ── Step 1: Load products to compute total ─────────────────────────────────
     const productIds = items.map((i) => i.productId);
     const products = productIds.length > 0
       ? await prisma.product.findMany({
-          where: { id: { in: productIds }, isActive: true },
+          where: { id: { in: productIds }, isActive: true, organizationId: orgId },
           select: { id: true, salePrice: true },
         })
       : [];
@@ -134,7 +150,7 @@ export async function POST(req: NextRequest) {
     const comboIds = (comboItems ?? []).map((c) => c.comboId);
     const combos = comboIds.length > 0
       ? await prisma.combo.findMany({
-          where: { id: { in: comboIds }, isActive: true },
+          where: { id: { in: comboIds }, isActive: true, organizationId: orgId },
           select: { id: true, salePrice: true },
         })
       : [];
@@ -152,6 +168,13 @@ export async function POST(req: NextRequest) {
     const productMap = new Map(products.map((p) => [p.id, p]));
     const comboMap = new Map(combos.map((c) => [c.id, c]));
 
+    // Fetch delivery fee from org if order is DELIVERY
+    let orgDeliveryFee = 0;
+    if (orderType === "DELIVERY") {
+      const org = await prisma.organization.findUnique({ where: { id: orgId }, select: { deliveryFee: true } });
+      orgDeliveryFee = Number(org?.deliveryFee ?? 0);
+    }
+
     const saleTotal =
       items.reduce((sum, item) => {
         const product = productMap.get(item.productId)!;
@@ -160,20 +183,35 @@ export async function POST(req: NextRequest) {
       (comboItems ?? []).reduce((sum, ci) => {
         const combo = comboMap.get(ci.comboId)!;
         return sum + Number(combo.salePrice) * ci.quantity;
-      }, 0);
+      }, 0) +
+      orgDeliveryFee;
 
-    // ── Step 3: Create sale (NO stock deduction — happens on EN_PREPARACION) ───
+    // ── Step 3: Compute daily order number ────────────────────────────────────
+    const dayStart = new Date();
+    dayStart.setHours(0, 0, 0, 0);
+    const dayEnd = new Date();
+    dayEnd.setHours(23, 59, 59, 999);
+    const todayCount = await prisma.sale.count({
+      where: { organizationId: orgId, createdAt: { gte: dayStart, lte: dayEnd } },
+    });
+    const dailyOrderNumber = todayCount + 1;
+
+    // ── Step 4: Create sale (NO stock deduction — happens on EN_PREPARACION) ───
     const sale = await prisma.sale.create({
       data: {
         date: date ? new Date(date) : new Date(),
         notes,
         total: saleTotal,
+        organizationId: orgId,
         customerId: customerId ?? null,
         customerName: customerName ?? null,
         orderType,
         orderStatus: "NUEVO",
         isPaid,
+        dailyOrderNumber,
         deliveryAddress: deliveryAddress ?? null,
+        deliveryFee: orgDeliveryFee > 0 ? orgDeliveryFee : null,
+        repartidorId: repartidorId ?? null,
         items: {
           create: items.map((i) => ({
             productId: i.productId,
@@ -204,7 +242,7 @@ export async function POST(req: NextRequest) {
       },
     });
 
-    revalidateTag("dashboard");
+    revalidateTag(`dashboard:${orgId}`);
     return NextResponse.json({ sale }, { status: 201 });
   } catch (e) {
     if (e instanceof ZodError) {

@@ -3,11 +3,15 @@ import { prisma } from "@/lib/prisma";
 import { CreateSupplierSchema } from "@/lib/validators";
 import { ZodError } from "zod";
 import { buildExcel, excelResponse } from "@/utils/excel";
+import { requireOrg, requireFeature } from "@/lib/requireOrg";
 
-export async function GET(req: NextRequest) {
+export async function GET(req: NextRequest) {  let orgId: string;
+  try { orgId = requireOrg(req); } catch (e) { return e as Response; }
+
   try {
     const format = new URL(req.url).searchParams.get("format");
     const suppliers = await prisma.supplier.findMany({
+      where: { organizationId: orgId },
       include: { _count: { select: { ingredients: true } } },
       orderBy: { name: "asc" },
     });
@@ -29,11 +33,14 @@ export async function GET(req: NextRequest) {
   }
 }
 
-export async function POST(req: NextRequest) {
+export async function POST(req: NextRequest) {  let orgId: string;
+  try { orgId = requireOrg(req); } catch (e) { return e as Response; }
+  try { requireFeature(req, "suppliers"); } catch (e) { return e as Response; }
+
   try {
     const body = await req.json();
     const data = CreateSupplierSchema.parse(body);
-    const supplier = await prisma.supplier.create({ data });
+    const supplier = await prisma.supplier.create({ data: { ...data, organizationId: orgId } });
     return NextResponse.json(supplier, { status: 201 });
   } catch (e) {
     if (e instanceof ZodError) {

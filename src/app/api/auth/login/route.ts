@@ -12,6 +12,9 @@ export async function POST(req: NextRequest) {
 
     const user = await prisma.user.findFirst({
       where: { username, isActive: true },
+      include: {
+        organization: { select: { plan: true, planExpiresAt: true } },
+      },
     });
 
     if (!user || !(await verifyPassword(password, user.password))) {
@@ -24,8 +27,11 @@ export async function POST(req: NextRequest) {
     const token = await signToken({
       sub: user.id,
       username: user.username,
-      role: user.role as "ADMIN" | "ENCARGADO" | "CAJERA" | "EMPLEADO",
+      role: user.role as import("@/lib/auth").UserRole,
+      organizationId: user.organizationId ?? null,
       employeeId: user.employeeId ?? undefined,
+      plan: (user.organization?.plan as "FREE" | "STARTER" | "PRO") ?? undefined,
+      planExpiresAt: user.organization?.planExpiresAt?.toISOString() ?? null,
     });
 
     const cookieStore = await cookies();

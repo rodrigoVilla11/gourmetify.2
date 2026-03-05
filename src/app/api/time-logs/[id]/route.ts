@@ -2,10 +2,13 @@ import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { UpdateTimeLogSchema } from "@/lib/validators";
 import { ZodError } from "zod";
+import { requireOrg } from "@/lib/requireOrg";
 
 type Params = { params: { id: string } };
 
-export async function PUT(req: NextRequest, { params }: Params) {
+export async function PUT(req: NextRequest, { params }: Params) {  let orgId: string;
+  try { orgId = requireOrg(req); } catch (e) { return e as Response; }
+
   try {
     const body = await req.json();
     const data = UpdateTimeLogSchema.parse(body);
@@ -20,7 +23,7 @@ export async function PUT(req: NextRequest, { params }: Params) {
     }
 
     const timeLog = await prisma.timeLog.update({
-      where: { id: params.id },
+      where: { id: params.id, organizationId: orgId },
       data: {
         ...(checkIn !== undefined ? { checkIn } : {}),
         ...(checkOut !== undefined ? { checkOut } : {}),
@@ -39,9 +42,11 @@ export async function PUT(req: NextRequest, { params }: Params) {
   }
 }
 
-export async function DELETE(_: NextRequest, { params }: Params) {
+export async function DELETE(req: NextRequest, { params }: Params) {
+  let orgId: string;
+  try { orgId = requireOrg(req); } catch (e) { return e as Response; }
   try {
-    await prisma.timeLog.delete({ where: { id: params.id } });
+    await prisma.timeLog.delete({ where: { id: params.id, organizationId: orgId } });
     return NextResponse.json({ success: true });
   } catch {
     return NextResponse.json({ error: "Error al eliminar fichaje", code: "INTERNAL_ERROR" }, { status: 500 });

@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { CreateSupplierPaymentSchema } from "@/lib/validators";
 import { ZodError } from "zod";
+import { requireOrg } from "@/lib/requireOrg";
 
 function calcInvoiceStatus(totalPaid: number, invoiceAmount: number): string {
   if (totalPaid >= invoiceAmount) return "PAID";
@@ -9,7 +10,9 @@ function calcInvoiceStatus(totalPaid: number, invoiceAmount: number): string {
   return "PENDING";
 }
 
-export async function GET(req: NextRequest) {
+export async function GET(req: NextRequest) {  let orgId: string;
+  try { orgId = requireOrg(req); } catch (e) { return e as Response; }
+
   try {
     const { searchParams } = new URL(req.url);
     const supplierId = searchParams.get("supplierId");
@@ -18,6 +21,7 @@ export async function GET(req: NextRequest) {
     const to = searchParams.get("to");
 
     const where = {
+      organizationId: orgId,
       ...(supplierId ? { supplierId } : {}),
       ...(invoiceId ? { invoiceId } : {}),
       ...(from || to ? {
@@ -39,7 +43,9 @@ export async function GET(req: NextRequest) {
   }
 }
 
-export async function POST(req: NextRequest) {
+export async function POST(req: NextRequest) {  let orgId: string;
+  try { orgId = requireOrg(req); } catch (e) { return e as Response; }
+
   try {
     const body = await req.json();
     const data = CreateSupplierPaymentSchema.parse(body);
@@ -47,6 +53,7 @@ export async function POST(req: NextRequest) {
     const result = await prisma.$transaction(async (tx) => {
       const paymentDate = data.date ? new Date(data.date) : new Date();
       const paymentBase = {
+        organizationId: orgId,
         supplierId: data.supplierId,
         currency: data.currency,
         date: paymentDate,
@@ -78,7 +85,7 @@ export async function POST(req: NextRequest) {
       // ── Case B: no invoice — FIFO auto-allocation across oldest invoices ──────
       // Load all unpaid/partial invoices for this supplier, oldest first
       const openInvoices = await tx.supplierInvoice.findMany({
-        where: { supplierId: data.supplierId, status: { in: ["PENDING", "PARTIAL"] } },
+        where: { organizationId: orgId, supplierId: data.supplierId, status: { in: ["PENDING", "PARTIAL"] } },
         include: { supplierPayments: { select: { amount: true } } },
         orderBy: { date: "asc" },
       });

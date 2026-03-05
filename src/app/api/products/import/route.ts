@@ -1,8 +1,11 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { parseExcel } from "@/utils/excel";
+import { requireOrg } from "@/lib/requireOrg";
 
-export async function POST(req: NextRequest) {
+export async function POST(req: NextRequest) {  let orgId: string;
+  try { orgId = requireOrg(req); } catch (e) { return e as Response; }
+
   try {
     const formData = await req.formData();
     const file = formData.get("file") as File | null;
@@ -38,13 +41,13 @@ export async function POST(req: NextRequest) {
         // Match by SKU (if provided, it's unique) or by name
         const existing = await prisma.product.findFirst({
           where: sku
-            ? { OR: [{ sku }, { name: { equals: name, mode: "insensitive" } }] }
-            : { name: { equals: name, mode: "insensitive" } },
+            ? { organizationId: orgId, OR: [{ sku }, { name: { equals: name, mode: "insensitive" } }] }
+            : { organizationId: orgId, name: { equals: name, mode: "insensitive" } },
         });
 
         if (existing) {
           await prisma.product.update({
-            where: { id: existing.id },
+            where: { id: existing.id, organizationId: orgId },
             data: {
               name,
               sku: sku || existing.sku,
@@ -57,6 +60,7 @@ export async function POST(req: NextRequest) {
           await prisma.product.create({
             data: {
               name,
+              organizationId: orgId,
               sku: sku || null,
               salePrice,
               currency: currencyVal as "ARS" | "USD",

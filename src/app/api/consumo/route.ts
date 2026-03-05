@@ -1,7 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
+import { requireOrg } from "@/lib/requireOrg";
 
-export async function GET(req: NextRequest) {
+export async function GET(req: NextRequest) {  let orgId: string;
+  try { orgId = requireOrg(req); } catch (e) { return e as Response; }
+
   try {
     const { searchParams } = new URL(req.url);
     const from = searchParams.get("from");
@@ -18,7 +21,7 @@ export async function GET(req: NextRequest) {
     // ── Ingredient consumption (StockMovements type=SALE) ───────────────────
     const groupedIng = await prisma.stockMovement.groupBy({
       by: ["ingredientId"],
-      where: { type: "SALE", createdAt: dateFilter },
+      where: { organizationId: orgId, type: "SALE", createdAt: dateFilter },
       _sum: { delta: true },
     });
 
@@ -30,7 +33,7 @@ export async function GET(req: NextRequest) {
 
     if (groupedIng.length > 0) {
       const ingredients = await prisma.ingredient.findMany({
-        where: { id: { in: groupedIng.map((g) => g.ingredientId) } },
+        where: { organizationId: orgId, id: { in: groupedIng.map((g) => g.ingredientId) } },
         select: { id: true, name: true, unit: true, costPerUnit: true, currency: true },
       });
       const ingMap = new Map(ingredients.map((i) => [i.id, i]));
@@ -58,7 +61,7 @@ export async function GET(req: NextRequest) {
     // ── Preparation consumption (PreparationMovements type=SALE|CONSUME) ────
     const groupedPrep = await prisma.preparationMovement.groupBy({
       by: ["preparationId"],
-      where: { type: { in: ["SALE", "CONSUME"] }, createdAt: dateFilter },
+      where: { organizationId: orgId, type: { in: ["SALE", "CONSUME"] }, createdAt: dateFilter },
       _sum: { delta: true },
     });
 
@@ -69,7 +72,7 @@ export async function GET(req: NextRequest) {
 
     if (groupedPrep.length > 0) {
       const preparations = await prisma.preparation.findMany({
-        where: { id: { in: groupedPrep.map((g) => g.preparationId) } },
+        where: { organizationId: orgId, id: { in: groupedPrep.map((g) => g.preparationId) } },
         select: { id: true, name: true, unit: true, costPrice: true },
       });
       const prepMap = new Map(preparations.map((p) => [p.id, p]));

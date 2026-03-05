@@ -1,10 +1,13 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { format } from "date-fns";
+import { requireOrg } from "@/lib/requireOrg";
 
 // GET /api/schedules/today?employeeId=  →  today's schedules (up to 2) + rest day status
 // Used by the fichador to enforce check-in times
-export async function GET(req: NextRequest) {
+export async function GET(req: NextRequest) {  let orgId: string;
+  try { orgId = requireOrg(req); } catch (e) { return e as Response; }
+
   try {
     const { searchParams } = new URL(req.url);
     const employeeId = searchParams.get("employeeId");
@@ -18,11 +21,11 @@ export async function GET(req: NextRequest) {
 
     const [schedules, restDay] = await Promise.all([
       prisma.workSchedule.findMany({
-        where: { employeeId, dayOfWeek },
+        where: { organizationId: orgId, employeeId, dayOfWeek },
         orderBy: { shiftIndex: "asc" },
       }),
-      prisma.restDay.findUnique({
-        where: { employeeId_date: { employeeId, date: dateStr } },
+      prisma.restDay.findFirst({
+        where: { organizationId: orgId, employeeId, date: dateStr },
       }),
     ]);
 

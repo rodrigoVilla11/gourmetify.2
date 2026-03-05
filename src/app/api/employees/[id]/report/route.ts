@@ -2,10 +2,13 @@ import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { buildExcel, excelResponse } from "@/utils/excel";
 import { format } from "date-fns";
+import { requireOrg } from "@/lib/requireOrg";
 
 type Params = { params: { id: string } };
 
-export async function GET(req: NextRequest, { params }: Params) {
+export async function GET(req: NextRequest, { params }: Params) {  let orgId: string;
+  try { orgId = requireOrg(req); } catch (e) { return e as Response; }
+
   try {
     const { searchParams } = new URL(req.url);
     const from = searchParams.get("from");
@@ -16,7 +19,7 @@ export async function GET(req: NextRequest, { params }: Params) {
       return NextResponse.json({ error: "Los parámetros from y to son requeridos", code: "VALIDATION_ERROR" }, { status: 400 });
     }
 
-    const employee = await prisma.employee.findUnique({ where: { id: params.id } });
+    const employee = await prisma.employee.findUnique({ where: { id: params.id, organizationId: orgId } });
     if (!employee) {
       return NextResponse.json({ error: "Empleado no encontrado", code: "NOT_FOUND" }, { status: 404 });
     }
@@ -25,7 +28,7 @@ export async function GET(req: NextRequest, { params }: Params) {
     const toDate = new Date(to + "T23:59:59.999Z");
 
     const logs = await prisma.timeLog.findMany({
-      where: { employeeId: params.id, checkIn: { gte: fromDate, lte: toDate } },
+      where: { organizationId: orgId, employeeId: params.id, checkIn: { gte: fromDate, lte: toDate } },
       orderBy: { checkIn: "asc" },
     });
 

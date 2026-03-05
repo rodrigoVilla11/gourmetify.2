@@ -21,6 +21,7 @@ interface Preparation {
   name: string;
   unit: Unit;
   yieldQty: string;
+  wastagePct: string;
   onHand: string;
   costPrice: string;
   notes: string | null;
@@ -32,6 +33,7 @@ interface PrepForm {
   name: string;
   unit: Unit;
   yieldQty: number;
+  wastagePct: number;
   notes?: string;
   ingredients: BOMEntry[];
   subPreparations: SubPrepEntry[];
@@ -78,7 +80,7 @@ export default function PreparacionesPage() {
   const openCreate = () => {
     setEditingItem(null);
     setSaveError("");
-    reset({ name: "", unit: "UNIT", yieldQty: 1, notes: "", ingredients: [], subPreparations: [] });
+    reset({ name: "", unit: "UNIT", yieldQty: 1, wastagePct: 0, notes: "", ingredients: [], subPreparations: [] });
     setIsModalOpen(true);
   };
 
@@ -89,6 +91,7 @@ export default function PreparacionesPage() {
       name: p.name,
       unit: p.unit,
       yieldQty: parseFloat(p.yieldQty),
+      wastagePct: parseFloat(p.wastagePct ?? "0"),
       notes: p.notes ?? "",
       ingredients: p.ingredients.map((b) => ({
         ingredientId: b.ingredientId,
@@ -174,21 +177,34 @@ export default function PreparacionesPage() {
   const watchedSubPreps = watch("subPreparations");
 
   // Preview of deduction when producing
+  const hasOutputWastage = producingPrep ? parseFloat(producingPrep.wastagePct ?? "0") > 0 : false;
+  const prepWastagePct = producingPrep ? parseFloat(producingPrep.wastagePct ?? "0") : 0;
+
   const produceIngredientPreview = producingPrep ? producingPrep.ingredients.map((b) => ({
     name: b.ingredient.name,
-    total: parseFloat(b.qty) * (1 + parseFloat(b.wastagePct) / 100) * produceBatches,
+    total: hasOutputWastage
+      ? parseFloat(b.qty) * produceBatches
+      : parseFloat(b.qty) * (1 + parseFloat(b.wastagePct) / 100) * produceBatches,
     unit: b.unit,
     isPrep: false,
   })) : [];
 
   const produceSubPrepPreview = producingPrep ? (producingPrep.subPreparations ?? []).map((b) => ({
     name: b.subPrep.name,
-    total: parseFloat(b.qty) * (1 + parseFloat(b.wastagePct) / 100) * produceBatches,
+    total: hasOutputWastage
+      ? parseFloat(b.qty) * produceBatches
+      : parseFloat(b.qty) * (1 + parseFloat(b.wastagePct) / 100) * produceBatches,
     unit: b.unit,
     isPrep: true,
   })) : [];
 
   const producePreview = [...produceIngredientPreview, ...produceSubPrepPreview];
+
+  const produceYield = producingPrep
+    ? hasOutputWastage
+      ? produceBatches * (1 - prepWastagePct / 100)
+      : parseFloat(producingPrep.yieldQty) * produceBatches
+    : 0;
 
   // Available preparations for sub-prep selector (exclude the one being edited)
   const availableSubPreps = preparations.filter((p) => p.isActive && p.id !== editingItem?.id);
@@ -300,18 +316,35 @@ export default function PreparacionesPage() {
       >
         <form onSubmit={handleSubmit(onSubmit)} className="space-y-5">
           <Input label="Nombre *" {...register("name", { required: "Nombre requerido" })} error={errors.name?.message} />
-          <div className="grid grid-cols-3 gap-4">
+          <div className="grid grid-cols-2 gap-4">
             <Select label="Unidad de salida" {...register("unit")}>
               {UNITS.map((u) => <option key={u} value={u}>{u} — {unitLabel(u)}</option>)}
             </Select>
-            <Input
-              label="Rendimiento / tanda"
-              type="number"
-              step="0.001"
-              min="0.001"
-              {...register("yieldQty", { valueAsNumber: true, min: 0.001 })}
-            />
             <Input label="Notas" {...register("notes")} placeholder="Opcional" />
+          </div>
+          <div className="grid grid-cols-2 gap-4">
+            <div>
+              <Input
+                label="Rendimiento / tanda"
+                type="number"
+                step="0.001"
+                min="0.001"
+                {...register("yieldQty", { valueAsNumber: true, min: 0.001 })}
+              />
+              <p className="text-xs text-gray-400 mt-1">Se usa cuando Merma % = 0</p>
+            </div>
+            <div>
+              <Input
+                label="Merma % (salida)"
+                type="number"
+                step="0.1"
+                min="0"
+                max="100"
+                {...register("wastagePct", { valueAsNumber: true })}
+                placeholder="0"
+              />
+              <p className="text-xs text-gray-400 mt-1">Si &gt; 0: producido × (1 - merma%)</p>
+            </div>
           </div>
 
           {/* Raw ingredients BOM */}
@@ -455,21 +488,35 @@ export default function PreparacionesPage() {
       >
         <div className="space-y-4">
           <div>
-            <label className="block text-xs font-medium text-gray-600 mb-1">Cantidad de tandas</label>
+            <label className="block text-xs font-medium text-gray-600 mb-1">
+              {hasOutputWastage
+                ? `Cantidad cruda a procesar (${producingPrep?.unit})`
+                : "Cantidad de tandas"}
+            </label>
             <input
               type="number"
-              min="1"
-              step="1"
+              min="0.001"
+              step={hasOutputWastage ? "0.001" : "1"}
               value={produceBatches}
-              onChange={(e) => setProduceBatches(Math.max(1, parseInt(e.target.value) || 1))}
+              onChange={(e) => setProduceBatches(Math.max(0.001, parseFloat(e.target.value) || 0.001))}
               className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500"
             />
+            {hasOutputWastage && (
+              <p className="text-xs text-gray-400 mt-1">
+                El ingrediente se descuenta al 100%. La merma ({prepWastagePct}%) reduce el stock producido.
+              </p>
+            )}
           </div>
 
           {producingPrep && (
             <div className="bg-emerald-50 border border-emerald-100 rounded-lg p-3 space-y-1.5">
               <p className="text-xs font-semibold text-emerald-700">
-                Resultado: +{parseFloat(producingPrep.yieldQty) * produceBatches} {producingPrep.unit} de {producingPrep.name}
+                Resultado: +{produceYield.toLocaleString("es-AR", { maximumFractionDigits: 3 })} {producingPrep.unit} de {producingPrep.name}
+                {hasOutputWastage && (
+                  <span className="text-emerald-500 font-normal ml-1">
+                    ({produceBatches} − {prepWastagePct}% merma)
+                  </span>
+                )}
               </p>
               {producePreview.length > 0 && (
                 <>

@@ -1,7 +1,10 @@
-import { NextResponse } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
+import { requireOrg } from "@/lib/requireOrg";
 
-export async function GET() {
+export async function GET(req: NextRequest) {
+  let orgId: string;
+  try { orgId = requireOrg(req); } catch (e) { return e as Response; }
   try {
     const sevenDaysAgo = new Date();
     sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
@@ -9,11 +12,11 @@ export async function GET() {
     const [movements, ingredients] = await Promise.all([
       prisma.stockMovement.groupBy({
         by: ["ingredientId"],
-        where: { type: "SALE", createdAt: { gte: sevenDaysAgo } },
+        where: { type: "SALE", createdAt: { gte: sevenDaysAgo }, organizationId: orgId },
         _sum: { delta: true },
       }),
       prisma.ingredient.findMany({
-        where: { isActive: true },
+        where: { isActive: true, organizationId: orgId },
         select: { id: true, onHand: true },
       }),
     ]);

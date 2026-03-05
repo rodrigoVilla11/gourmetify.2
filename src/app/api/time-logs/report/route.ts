@@ -1,8 +1,11 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { buildExcel, excelResponse } from "@/utils/excel";
+import { requireOrg } from "@/lib/requireOrg";
 
-export async function GET(req: NextRequest) {
+export async function GET(req: NextRequest) {  let orgId: string;
+  try { orgId = requireOrg(req); } catch (e) { return e as Response; }
+
   try {
     const { searchParams } = new URL(req.url);
     const from = searchParams.get("from");
@@ -20,7 +23,7 @@ export async function GET(req: NextRequest) {
     const toDate = new Date(to + "T23:59:59.999Z");
 
     const employees = await prisma.employee.findMany({
-      where: { isActive: true },
+      where: { organizationId: orgId, isActive: true },
       include: {
         timeLogs: {
           where: { checkIn: { gte: fromDate, lte: toDate } },

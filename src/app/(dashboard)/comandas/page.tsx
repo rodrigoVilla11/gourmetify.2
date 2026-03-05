@@ -14,6 +14,20 @@ type SelectedCustomer = { id: string; name: string; phone: string | null; addres
 type CustomerSearchStatus = "idle" | "searching" | "found" | "not-found";
 type OrderType        = "SALON" | "TAKEAWAY" | "DELIVERY";
 
+type OrgPMConfig = {
+  enabled: boolean;
+  adjustmentType: "none" | "discount" | "surcharge";
+  adjustmentPct: number;
+  alias?: string; bank?: string; holder?: string; link?: string;
+};
+type OrgPaymentMethods = {
+  cash?: OrgPMConfig; transfer?: OrgPMConfig; mercadopago?: OrgPMConfig;
+  debit?: OrgPMConfig; credit?: OrgPMConfig;
+};
+type OrgModalities = { salon: boolean; delivery: boolean; takeaway: boolean };
+type OrgConfig = { paymentMethods?: OrgPaymentMethods | null; modalities?: OrgModalities | null; deliveryFee?: number | null };
+type Repartidor = { id: string; name: string; phone: string | null };
+
 type KanbanOrder = {
   id: string;
   date: string;
@@ -22,10 +36,16 @@ type KanbanOrder = {
   orderType: string;
   isPaid: boolean;
   deliveryAddress: string | null;
+  deliveryFee: string | null;
+  repartidorId: string | null;
+  repartidor: { name: string } | null;
   customerName: string | null;
+  dailyOrderNumber: number | null;
+  delayMinutes: number | null;
   customer: { name: string } | null;
-  items: { product: { name: string }; quantity: string }[];
-  combos: { combo: { name: string }; quantity: string }[];
+  items: { productId: string; product: { name: string }; quantity: string }[];
+  combos: { comboId: string; combo: { name: string }; quantity: string }[];
+  payments: { paymentMethod: string; amount: string }[];
 };
 
 const KANBAN_COLUMNS = [
@@ -42,13 +62,13 @@ const STATUS_NEXT_BTN: Record<string, string>   = {
   LISTO:          "bg-emerald-700 hover:bg-emerald-800 text-white",
 };
 
-const PAYMENT_METHODS = [
-  { value: "EFECTIVO",      label: "Efectivo",      icon: "💵" },
-  { value: "TRANSFERENCIA", label: "Transferencia", icon: "🏦" },
-  { value: "DEBITO",        label: "Débito",        icon: "💳" },
-  { value: "CREDITO",       label: "Crédito",       icon: "💳" },
-  { value: "ONLINE",        label: "Mercado Pago",  icon: "📱" },
-  { value: "RAPPI",         label: "Rappi",         icon: "🛵" },
+// Static map: key matches OrgPaymentMethods keys, value = payment method string stored in DB
+const PM_MAP: { key: keyof OrgPaymentMethods; value: string; label: string; icon: string }[] = [
+  { key: "cash",        value: "EFECTIVO",      label: "Efectivo",      icon: "💵" },
+  { key: "transfer",    value: "TRANSFERENCIA", label: "Transferencia", icon: "🏦" },
+  { key: "mercadopago", value: "ONLINE",        label: "Mercado Pago",  icon: "🔵" },
+  { key: "debit",       value: "DEBITO",        label: "Débito",        icon: "💳" },
+  { key: "credit",      value: "CREDITO",       label: "Crédito",       icon: "💰" },
 ];
 
 const ORDER_TYPES: { value: OrderType; label: string; icon: string }[] = [
@@ -103,6 +123,17 @@ export default function ComandasPage() {
   const [cancellingStatus, setCancellingStatus] = useState<"idle" | "loading">("idle");
   const prevNuevoIds = useRef<Set<string>>(new Set());
 
+  // ── Detail modal state ─────────────────────────────────────────────────────
+  type DetailEditItem = { id: string; type: "product" | "combo"; name: string; qty: number };
+  const [detailId, setDetailId]                             = useState<string | null>(null);
+  const [detailEditRepartidorId, setDetailEditRepartidorId] = useState("");
+  const [detailEditDeliveryAddress, setDetailEditDeliveryAddress] = useState("");
+  const [detailEditCustomerName, setDetailEditCustomerName] = useState("");
+  const [detailEditItems, setDetailEditItems]               = useState<DetailEditItem[]>([]);
+  const [detailItemSearch, setDetailItemSearch]             = useState("");
+  const [detailEditPayments, setDetailEditPayments]         = useState<Payment[]>([]);
+  const [detailSaving, setDetailSaving]                     = useState(false);
+
   // ── Cobrar state ───────────────────────────────────────────────────────────
   const [cobrandoId, setCobrandoId]     = useState<string | null>(null);
   const [cobrarPayments, setCobrarPayments] = useState<Payment[]>([]);
@@ -117,9 +148,31 @@ export default function ComandasPage() {
   const [newCustomerName, setNewCustomerName]           = useState("");
   const [creatingCustomer, setCreatingCustomer]         = useState(false);
   const [deliveryAddress, setDeliveryAddress]           = useState("");
+  const [repartidorId, setRepartidorId]                 = useState<string>("");
+  const [repartidores, setRepartidores]                 = useState<Repartidor[]>([]);
+
+  // ── Org config ─────────────────────────────────────────────────────────────
+  const [orgConfig, setOrgConfig] = useState<OrgConfig | null>(null);
+
+  // Reset orderType to first active modality when config loads
+  useEffect(() => {
+    if (!orgConfig?.modalities) return;
+    const mod = orgConfig.modalities;
+    const valid = (orderType === "SALON" && mod.salon !== false) ||
+                  (orderType === "DELIVERY" && mod.delivery) ||
+                  (orderType === "TAKEAWAY" && mod.takeaway);
+    if (!valid) {
+      if (mod.salon !== false)  setOrderType("SALON");
+      else if (mod.delivery)    setOrderType("DELIVERY");
+      else if (mod.takeaway)    setOrderType("TAKEAWAY");
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [orgConfig]);
 
   // ── Load catalog ───────────────────────────────────────────────────────────
   useEffect(() => {
+    fetch("/api/organizations/me").then((r) => r.json()).then((d: OrgConfig) => setOrgConfig(d));
+    fetch("/api/repartidores").then((r) => r.ok ? r.json() : []).then((d) => { if (Array.isArray(d)) setRepartidores(d); }).catch(() => {});
     Promise.all([
       fetch("/api/products?isActive=true").then((r) => r.json()),
       fetch("/api/combos?isActive=true").then((r) => r.json()),
@@ -227,10 +280,90 @@ export default function ComandasPage() {
     if (!cancellingId) return;
     const o = kanbanOrders.find((x) => x.id === cancellingId);
     setCancellingStatus("loading");
-    await moveOrder(cancellingId, "CANCELADO", o?.orderStatus === "EN_PREPARACION" ? cancelRollback : false);
+    const needsRollback = o?.orderStatus === "EN_PREPARACION" || o?.orderStatus === "LISTO";
+    await moveOrder(cancellingId, "CANCELADO", needsRollback ? cancelRollback : false);
     setCancellingStatus("idle");
     setCancellingId(null);
     setCancelRollback(true);
+  }
+
+  // ── Detail modal helpers ────────────────────────────────────────────────────
+  const detailOrder = kanbanOrders.find((o) => o.id === detailId);
+
+  function openDetail(ko: KanbanOrder) {
+    setDetailId(ko.id);
+    setDetailEditRepartidorId(ko.repartidorId ?? "");
+    setDetailEditDeliveryAddress(ko.deliveryAddress ?? "");
+    setDetailEditCustomerName(ko.customer?.name ?? ko.customerName ?? "");
+    setDetailEditItems([
+      ...ko.items.map(i => ({ id: i.productId, type: "product" as const, name: i.product.name, qty: Number(i.quantity) })),
+      ...ko.combos.map(c => ({ id: c.comboId, type: "combo" as const, name: c.combo.name, qty: Number(c.quantity) })),
+    ]);
+    setDetailEditPayments(ko.payments.map(p => ({ method: p.paymentMethod, amount: String(p.amount) })));
+    setDetailItemSearch("");
+  }
+
+  function detailSetQty(id: string, type: DetailEditItem["type"], qty: number) {
+    if (qty <= 0) {
+      setDetailEditItems(prev => prev.filter(i => !(i.id === id && i.type === type)));
+    } else {
+      setDetailEditItems(prev => prev.map(i => i.id === id && i.type === type ? { ...i, qty } : i));
+    }
+  }
+
+  function detailTogglePayment(method: string) {
+    const currentTotal = getDetailTotal();
+    setDetailEditPayments(prev => {
+      const existing = prev.find(p => p.method === method);
+      if (existing) return prev.filter(p => p.method !== method);
+      const sumExisting = prev.reduce((s, p) => s + (Number(p.amount) || 0), 0);
+      return [...prev, { method, amount: String(Math.max(0, Math.round(currentTotal - sumExisting))) }];
+    });
+  }
+
+  function detailUpdatePaymentAmount(method: string, val: string) {
+    setDetailEditPayments(prev => prev.map(p => p.method === method ? { ...p, amount: val } : p));
+  }
+
+  function detailAddItem(item: DetailEditItem) {
+    setDetailEditItems(prev => {
+      const existing = prev.find(i => i.id === item.id && i.type === item.type);
+      if (existing) return prev.map(i => i.id === item.id && i.type === item.type ? { ...i, qty: i.qty + 1 } : i);
+      return [...prev, { ...item, qty: 1 }];
+    });
+    setDetailItemSearch("");
+  }
+
+  function getDetailTotal() {
+    return detailEditItems.reduce((sum, i) => {
+      if (i.type === "product") {
+        const p = products.find(p => p.id === i.id);
+        return sum + (p ? p.salePrice : 0) * i.qty;
+      } else {
+        const c = combos.find(c => c.id === i.id);
+        return sum + (c ? c.salePrice : 0) * i.qty;
+      }
+    }, 0) + (detailOrder?.orderType === "DELIVERY" ? (Number(orgConfig?.deliveryFee) || 0) : 0);
+  }
+
+  async function saveDetailEdits() {
+    if (!detailId || detailEditItems.length === 0) return;
+    setDetailSaving(true);
+    await fetch(`/api/sales/${detailId}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        repartidorId:    detailEditRepartidorId || null,
+        deliveryAddress: detailEditDeliveryAddress || null,
+        customerName:    detailEditCustomerName || null,
+        newItems:      detailEditItems.filter(i => i.type === "product").map(i => ({ productId: i.id, quantity: i.qty })),
+        newComboItems: detailEditItems.filter(i => i.type === "combo").map(i => ({ comboId: i.id, quantity: i.qty })),
+        newPayments:   detailEditPayments.filter(p => Number(p.amount) > 0).map(p => ({ paymentMethod: p.method, amount: Number(p.amount) })),
+      }),
+    });
+    setDetailSaving(false);
+    setDetailId(null);
+    await fetchKanban();
   }
 
   // ── Order helpers ──────────────────────────────────────────────────────────
@@ -250,11 +383,53 @@ export default function ComandasPage() {
     }
   }
 
-  const total       = order.reduce((sum, o) => sum + o.price * o.quantity, 0);
+  const orgDeliveryFee = orderType === "DELIVERY" ? (Number(orgConfig?.deliveryFee) || 0) : 0;
+  const total       = order.reduce((sum, o) => sum + o.price * o.quantity, 0) + orgDeliveryFee;
   const sumPayments = payments.reduce((sum, p) => sum + (Number(p.amount) || 0), 0);
-  const diff        = total - sumPayments;
+
+  // ── Dynamic methods and modalities from org config ──────────────────────────
+  const activePaymentMethods = (() => {
+    const pm = orgConfig?.paymentMethods;
+    if (!pm) return PM_MAP.map((m) => ({ ...m, cfg: null as OrgPMConfig | null }));
+    return PM_MAP
+      .map((m) => ({ ...m, cfg: (pm[m.key] ?? null) as OrgPMConfig | null }))
+      .filter((m) => m.cfg?.enabled);
+  })();
+
+  const activeOrderTypes = (() => {
+    const mod = orgConfig?.modalities;
+    if (!mod) return ORDER_TYPES;
+    return ORDER_TYPES.filter((t) => {
+      if (t.value === "SALON")    return mod.salon !== false;
+      if (t.value === "DELIVERY") return mod.delivery;
+      if (t.value === "TAKEAWAY") return mod.takeaway;
+      return true;
+    });
+  })();
+
+  // Effective total: apply adjustment when exactly one payment method selected
+  const effectiveTotal = (() => {
+    if (payments.length !== 1) return total;
+    const sel = activePaymentMethods.find((m) => m.value === payments[0].method);
+    if (!sel?.cfg || sel.cfg.adjustmentType === "none") return total;
+    const factor = sel.cfg.adjustmentType === "surcharge"
+      ? 1 + sel.cfg.adjustmentPct / 100
+      : 1 - sel.cfg.adjustmentPct / 100;
+    return Math.round(total * factor);
+  })();
+
+  const diff = effectiveTotal - sumPayments;
 
   // ── Payment helpers ────────────────────────────────────────────────────────
+  function getAdjustedTotal(method: string, baseTotal: number): number {
+    const sel = activePaymentMethods.find((m) => m.value === method);
+    if (!sel?.cfg || sel.cfg.adjustmentType === "none") return baseTotal;
+    const factor = sel.cfg.adjustmentType === "surcharge"
+      ? 1 + sel.cfg.adjustmentPct / 100
+      : 1 - sel.cfg.adjustmentPct / 100;
+    return Math.round(baseTotal * factor);
+  }
+
   function togglePaymentMethod(method: string) {
     setPayments((prev) => {
       const existing = prev.find((p) => p.method === method);
@@ -267,8 +442,9 @@ export default function ComandasPage() {
         }
         return remaining;
       } else {
+        const adjTotal = prev.length === 0 ? getAdjustedTotal(method, total) : total;
         const sumExisting = prev.reduce((s, p) => s + (Number(p.amount) || 0), 0);
-        return [...prev, { method, amount: String(Math.max(0, Math.round(total - sumExisting))) }];
+        return [...prev, { method, amount: String(Math.max(0, Math.round(adjTotal - sumExisting))) }];
       }
     });
   }
@@ -281,6 +457,15 @@ export default function ComandasPage() {
   const cobrarOrder = kanbanOrders.find((o) => o.id === cobrandoId);
   const cobrarTotal = cobrarOrder ? Number(cobrarOrder.total) : 0;
   const sumCobrar   = cobrarPayments.reduce((s, p) => s + (Number(p.amount) || 0), 0);
+  const cobrarEffectiveTotal = (() => {
+    if (cobrarPayments.length !== 1) return cobrarTotal;
+    const sel = activePaymentMethods.find((m) => m.value === cobrarPayments[0].method);
+    if (!sel?.cfg || sel.cfg.adjustmentType === "none") return cobrarTotal;
+    const factor = sel.cfg.adjustmentType === "surcharge"
+      ? 1 + sel.cfg.adjustmentPct / 100
+      : 1 - sel.cfg.adjustmentPct / 100;
+    return Math.round(cobrarTotal * factor);
+  })();
 
   function toggleCobrarMethod(method: string) {
     setCobrarPayments((prev) => {
@@ -294,8 +479,9 @@ export default function ComandasPage() {
         }
         return remaining;
       } else {
+        const adjTotal = prev.length === 0 ? getAdjustedTotal(method, cobrarTotal) : cobrarTotal;
         const sumExisting = prev.reduce((s, p) => s + (Number(p.amount) || 0), 0);
-        return [...prev, { method, amount: String(Math.max(0, Math.round(cobrarTotal - sumExisting))) }];
+        return [...prev, { method, amount: String(Math.max(0, Math.round(adjTotal - sumExisting))) }];
       }
     });
   }
@@ -392,8 +578,9 @@ export default function ComandasPage() {
     if (opts.withPayment && paymentsToSend.length === 0) {
       setStatus("error"); setMessage("Seleccioná al menos un método de pago"); return;
     }
-    if (opts.withPayment && Math.abs(diff) > 0.01) {
-      setStatus("error"); setMessage(diff > 0 ? `Faltan ${fmt(diff)} para completar el pago` : `El pago excede el total por ${fmt(-diff)}`); return;
+    if (opts.withPayment && Math.abs(effectiveTotal - paymentsToSend.reduce((s, p) => s + p.amount, 0)) > 0.01) {
+      const d = effectiveTotal - paymentsToSend.reduce((s, p) => s + p.amount, 0);
+      setStatus("error"); setMessage(d > 0 ? `Faltan ${fmt(d)} para completar el pago` : `El pago excede el total por ${fmt(-d)}`); return;
     }
     setStatus("loading");
     const body = {
@@ -402,6 +589,7 @@ export default function ComandasPage() {
       payments:    paymentsToSend.map((p) => ({ paymentMethod: p.method, amount: Number(p.amount) })),
       orderType,
       deliveryAddress: orderType === "DELIVERY" && deliveryAddress.trim() ? deliveryAddress.trim() : null,
+      repartidorId: orderType === "DELIVERY" && repartidorId ? repartidorId : null,
       customerId:  selectedCustomer?.id ?? null,
       customerName: !selectedCustomer && customerName.trim() ? customerName.trim() : null,
     };
@@ -421,7 +609,7 @@ export default function ComandasPage() {
 
   function resetOrder() {
     setOrder([]); setPayments([]); setStatus("idle"); setMessage(""); setSaleId(""); setWarnings([]); setShowOrder(false);
-    clearCustomer(); setCustomerName(""); setOrderType("SALON"); setDeliveryAddress("");
+    clearCustomer(); setCustomerName(""); setOrderType("SALON"); setDeliveryAddress(""); setRepartidorId("");
   }
 
   // ── Filtered items ─────────────────────────────────────────────────────────
@@ -471,27 +659,39 @@ export default function ComandasPage() {
       ) : (
         <>
           {/* Order type */}
-          <div className="px-4 pt-3 pb-2 shrink-0">
-            <div className="flex gap-1 p-0.5 bg-gray-100 rounded-lg">
-              {ORDER_TYPES.map((t) => (
-                <button key={t.value} onClick={() => {
-                  setOrderType(t.value);
-                  if (t.value === "DELIVERY" && !deliveryAddress && selectedCustomer?.address) setDeliveryAddress(selectedCustomer.address);
-                }}
-                  className={`flex-1 py-1.5 rounded-md text-xs font-medium transition-colors ${orderType === t.value ? "bg-white shadow-sm text-emerald-700 font-semibold" : "text-gray-500 hover:text-gray-700"}`}
-                >
-                  {t.icon} {t.label}
-                </button>
-              ))}
+          {activeOrderTypes.length > 1 && (
+            <div className="px-4 pt-3 pb-2 shrink-0">
+              <div className="flex gap-1 p-0.5 bg-gray-100 rounded-lg">
+                {activeOrderTypes.map((t) => (
+                  <button key={t.value} onClick={() => {
+                    setOrderType(t.value);
+                    if (t.value === "DELIVERY" && !deliveryAddress && selectedCustomer?.address) setDeliveryAddress(selectedCustomer.address);
+                  }}
+                    className={`flex-1 py-1.5 rounded-md text-xs font-medium transition-colors ${orderType === t.value ? "bg-white shadow-sm text-emerald-700 font-semibold" : "text-gray-500 hover:text-gray-700"}`}
+                  >
+                    {t.icon} {t.label}
+                  </button>
+                ))}
+              </div>
             </div>
-          </div>
+          )}
 
-          {/* Delivery address */}
+          {/* Delivery address + repartidor */}
           {orderType === "DELIVERY" && (
-            <div className="px-4 pb-2 shrink-0">
+            <div className="px-4 pb-2 shrink-0 space-y-1.5">
               <input type="text" placeholder="Dirección de entrega..." value={deliveryAddress} onChange={(e) => setDeliveryAddress(e.target.value)}
                 className="w-full border border-amber-300 rounded-lg px-2.5 py-1.5 text-xs focus:outline-none focus:ring-2 focus:ring-amber-400 bg-amber-50/60 placeholder-amber-400"
               />
+              {repartidores.length > 0 && (
+                <select value={repartidorId} onChange={(e) => setRepartidorId(e.target.value)}
+                  className="w-full border border-amber-300 rounded-lg px-2.5 py-1.5 text-xs focus:outline-none focus:ring-2 focus:ring-amber-400 bg-amber-50/60 text-amber-800"
+                >
+                  <option value="">🛵 Repartidor (opcional)</option>
+                  {repartidores.map((r) => (
+                    <option key={r.id} value={r.id}>{r.name}{r.phone ? ` · ${r.phone}` : ""}</option>
+                  ))}
+                </select>
+              )}
             </div>
           )}
 
@@ -582,12 +782,45 @@ export default function ComandasPage() {
 
           {/* Total + payments + actions */}
           <div className="border-t border-gray-100 p-4 space-y-3 shrink-0">
-            <div className="flex justify-between items-center">
-              <span className="text-sm text-gray-600">Total</span>
-              <span className="text-xl font-bold text-gray-900 tabular-nums">{fmt(total)}</span>
-            </div>
-            <div className="grid grid-cols-3 gap-1.5">
-              {PAYMENT_METHODS.map((m) => {
+            {orgDeliveryFee > 0 ? (
+              <>
+                <div className="flex justify-between items-center text-sm">
+                  <span className="text-gray-500">Productos</span>
+                  <span className="text-gray-700 tabular-nums">{fmt(total - orgDeliveryFee)}</span>
+                </div>
+                <div className="flex justify-between items-center text-sm">
+                  <span className="text-gray-500">Costo envío</span>
+                  <span className="text-amber-600 tabular-nums">+{fmt(orgDeliveryFee)}</span>
+                </div>
+                <div className="flex justify-between items-center border-t border-gray-100 pt-2">
+                  <span className="text-sm text-gray-600 font-medium">Total</span>
+                  <span className="text-xl font-bold text-gray-900 tabular-nums">{fmt(total)}</span>
+                </div>
+              </>
+            ) : (
+              <div className="flex justify-between items-center">
+                <span className="text-sm text-gray-600">Subtotal</span>
+                <span className="text-xl font-bold text-gray-900 tabular-nums">{fmt(total)}</span>
+              </div>
+            )}
+            {/* Adjustment row when single method with adjustment */}
+            {payments.length === 1 && effectiveTotal !== total && (() => {
+              const sel = activePaymentMethods.find((m) => m.value === payments[0].method);
+              if (!sel?.cfg) return null;
+              const diff2 = effectiveTotal - total;
+              return (
+                <div className="flex justify-between items-center text-xs">
+                  <span className="text-gray-500">
+                    {sel.cfg.adjustmentType === "discount" ? `Descuento ${sel.cfg.adjustmentPct}%` : `Recargo ${sel.cfg.adjustmentPct}%`}
+                  </span>
+                  <span className={`font-semibold ${diff2 < 0 ? "text-green-600" : "text-red-500"}`}>
+                    {diff2 < 0 ? `−${fmt(-diff2)}` : `+${fmt(diff2)}`} = <span className="text-gray-800">{fmt(effectiveTotal)}</span>
+                  </span>
+                </div>
+              );
+            })()}
+            <div className={`grid gap-1.5 ${activePaymentMethods.length <= 3 ? "grid-cols-3" : activePaymentMethods.length === 4 ? "grid-cols-2 sm:grid-cols-4" : "grid-cols-3"}`}>
+              {activePaymentMethods.map((m) => {
                 const selected = payments.find((p) => p.method === m.value);
                 return (
                   <button key={m.value} onClick={() => togglePaymentMethod(m.value)}
@@ -595,6 +828,11 @@ export default function ComandasPage() {
                   >
                     <span className="text-base">{m.icon}</span>
                     <span className="text-[10px] font-semibold mt-0.5 leading-tight text-center">{m.label}</span>
+                    {m.cfg?.adjustmentType !== "none" && (
+                      <span className={`text-[9px] font-bold ${m.cfg?.adjustmentType === "discount" ? "text-green-500" : "text-red-400"}`}>
+                        {m.cfg?.adjustmentType === "discount" ? "−" : "+"}{m.cfg?.adjustmentPct}%
+                      </span>
+                    )}
                     {selected && (
                       <input type="number" min="0" value={selected.amount}
                         onChange={(e) => { e.stopPropagation(); updatePaymentAmount(m.value, e.target.value); }}
@@ -606,6 +844,25 @@ export default function ComandasPage() {
                 );
               })}
             </div>
+            {/* Transfer info */}
+            {payments.find((p) => p.method === "TRANSFERENCIA") && (() => {
+              const cfg = orgConfig?.paymentMethods?.transfer;
+              if (!cfg?.alias && !cfg?.bank) return null;
+              return (
+                <div className="bg-blue-50 rounded-lg px-3 py-2 text-xs text-blue-700 space-y-0.5">
+                  {cfg.bank && <p>🏦 <span className="font-medium">{cfg.bank}</span></p>}
+                  {cfg.alias && <p>Alias: <span className="font-semibold font-mono">{cfg.alias}</span></p>}
+                  {cfg.holder && <p>Titular: {cfg.holder}</p>}
+                </div>
+              );
+            })()}
+            {/* MP link */}
+            {payments.find((p) => p.method === "ONLINE") && orgConfig?.paymentMethods?.mercadopago?.link && (
+              <a href={orgConfig.paymentMethods.mercadopago.link} target="_blank" rel="noopener noreferrer"
+                className="flex items-center gap-1.5 text-xs text-blue-600 hover:underline">
+                🔵 Abrir link de cobro MP →
+              </a>
+            )}
             {payments.length > 0 && Math.abs(diff) > 0.01 && (
               <p className="text-xs text-rose-600 text-center">{diff > 0 ? `Faltan ${fmt(diff)}` : `Sobran ${fmt(-diff)}`}</p>
             )}
@@ -664,15 +921,30 @@ export default function ComandasPage() {
                               ref={prov.innerRef}
                               {...prov.draggableProps}
                               {...prov.dragHandleProps}
-                              className={`bg-white rounded-xl border border-gray-200 p-3 space-y-2 select-none transition-all ${snap.isDragging ? "shadow-xl rotate-1 opacity-95" : "shadow-sm hover:shadow-md"} ${movingId === ko.id ? "opacity-40 pointer-events-none" : ""}`}
+                              onClick={() => { if (!snap.isDragging) openDetail(ko); }}
+                            className={`bg-white rounded-xl border border-gray-200 p-3 space-y-2 select-none transition-all cursor-pointer ${snap.isDragging ? "shadow-xl rotate-1 opacity-95" : "shadow-sm hover:shadow-md"} ${movingId === ko.id ? "opacity-40 pointer-events-none" : ""}`}
                             >
                               {/* Header */}
                               <div className="flex items-start justify-between gap-1">
                                 <div className="min-w-0 flex-1">
-                                  <p className="font-semibold text-gray-900 text-sm truncate">
-                                    {ko.customer?.name ?? ko.customerName ?? "Anónimo"}
-                                  </p>
-                                  <p className="text-[11px] text-gray-400 mt-0.5">{relativeTime(ko.date)}</p>
+                                  <div className="flex items-center gap-1.5">
+                                    {ko.dailyOrderNumber != null && (
+                                      <span className="flex-shrink-0 font-bold text-gray-500 text-xs bg-gray-100 rounded px-1.5 py-0.5 font-mono">
+                                        #{ko.dailyOrderNumber}
+                                      </span>
+                                    )}
+                                    <p className="font-semibold text-gray-900 text-sm truncate">
+                                      {ko.customer?.name ?? ko.customerName ?? "Anónimo"}
+                                    </p>
+                                  </div>
+                                  <div className="flex items-center gap-1.5 mt-0.5">
+                                    <p className="text-[11px] text-gray-400">{relativeTime(ko.date)}</p>
+                                    {ko.delayMinutes != null && ko.delayMinutes > 0 && (
+                                      <span className="text-[10px] bg-amber-100 text-amber-700 rounded px-1.5 py-0.5 font-medium flex items-center gap-0.5">
+                                        ⏱ ~{ko.delayMinutes}m
+                                      </span>
+                                    )}
+                                  </div>
                                 </div>
                                 <div className="flex flex-col items-end gap-1 shrink-0">
                                   {ko.orderType !== "SALON" && (
@@ -680,9 +952,13 @@ export default function ComandasPage() {
                                       {ORDER_TYPE_LABELS[ko.orderType]}
                                     </span>
                                   )}
-                                  {!ko.isPaid && (
-                                    <span className="text-[9px] bg-rose-100 text-rose-600 rounded px-1.5 py-0.5 font-medium">Sin cobrar</span>
-                                  )}
+                                  {!ko.isPaid && (() => {
+                                    const paid = ko.payments.reduce((s, p) => s + Number(p.amount), 0);
+                                    const owed = Number(ko.total) - paid;
+                                    return paid > 0
+                                      ? <span className="text-[9px] bg-amber-100 text-amber-700 rounded px-1.5 py-0.5 font-medium">Falta {fmt(owed)}</span>
+                                      : <span className="text-[9px] bg-rose-100 text-rose-600 rounded px-1.5 py-0.5 font-medium">Sin cobrar</span>;
+                                  })()}
                                 </div>
                               </div>
 
@@ -694,11 +970,20 @@ export default function ComandasPage() {
                                 ].join(", ")}
                               </p>
 
-                              {/* Delivery address */}
-                              {ko.orderType === "DELIVERY" && ko.deliveryAddress && (
-                                <p className="text-[10px] text-amber-700 bg-amber-50 rounded px-2 py-1 truncate">
-                                  📍 {ko.deliveryAddress}
-                                </p>
+                              {/* Delivery address + repartidor */}
+                              {ko.orderType === "DELIVERY" && (ko.deliveryAddress || ko.repartidor) && (
+                                <div className="space-y-0.5">
+                                  {ko.deliveryAddress && (
+                                    <p className="text-[10px] text-amber-700 bg-amber-50 rounded px-2 py-1 truncate">
+                                      📍 {ko.deliveryAddress}
+                                    </p>
+                                  )}
+                                  {ko.repartidor && (
+                                    <p className="text-[10px] text-blue-700 bg-blue-50 rounded px-2 py-1 truncate">
+                                      🛵 {ko.repartidor.name}
+                                    </p>
+                                  )}
+                                </div>
                               )}
 
                               {/* Total */}
@@ -708,7 +993,7 @@ export default function ComandasPage() {
                               <div className="flex gap-1.5">
                                 {STATUS_NEXT[ko.orderStatus] && (
                                   <button
-                                    onClick={() => moveOrder(ko.id, STATUS_NEXT[ko.orderStatus])}
+                                    onClick={(e) => { e.stopPropagation(); moveOrder(ko.id, STATUS_NEXT[ko.orderStatus]); }}
                                     className={`flex-1 py-1.5 rounded-lg text-xs font-semibold transition-colors ${STATUS_NEXT_BTN[ko.orderStatus]}`}
                                   >
                                     {STATUS_NEXT_LABEL[ko.orderStatus]}
@@ -716,21 +1001,19 @@ export default function ComandasPage() {
                                 )}
                                 {!ko.isPaid && (
                                   <button
-                                    onClick={() => { setCobrandoId(ko.id); setCobrarPayments([]); }}
+                                    onClick={(e) => { e.stopPropagation(); setCobrandoId(ko.id); setCobrarPayments([]); }}
                                     className="px-2.5 py-1.5 rounded-lg text-xs font-semibold bg-gray-100 text-gray-700 hover:bg-gray-200 transition-colors"
                                   >
                                     Cobrar
                                   </button>
                                 )}
-                                {ko.orderStatus !== "LISTO" && (
-                                  <button
-                                    onClick={() => setCancellingId(ko.id)}
-                                    className="px-2 py-1.5 rounded-lg text-xs font-semibold text-rose-500 hover:bg-rose-50 transition-colors"
-                                    title="Cancelar pedido"
-                                  >
-                                    ✕
-                                  </button>
-                                )}
+                                <button
+                                  onClick={(e) => { e.stopPropagation(); setCancellingId(ko.id); }}
+                                  className="px-2 py-1.5 rounded-lg text-xs font-semibold text-rose-500 hover:bg-rose-50 transition-colors"
+                                  title="Cancelar pedido"
+                                >
+                                  ✕
+                                </button>
                               </div>
                             </div>
                           )}
@@ -915,8 +1198,23 @@ export default function ComandasPage() {
               </div>
             </div>
             <div className="p-4 space-y-3 overflow-y-auto flex-1">
-              <div className="grid grid-cols-3 gap-2">
-                {PAYMENT_METHODS.map((m) => {
+              {/* Cobrar adjustment row */}
+              {cobrarPayments.length === 1 && (() => {
+                const sel = activePaymentMethods.find((m) => m.value === cobrarPayments[0].method);
+                if (!sel?.cfg || sel.cfg.adjustmentType === "none") return null;
+                const adjTotal = Math.round(cobrarTotal * (sel.cfg.adjustmentType === "surcharge" ? 1 + sel.cfg.adjustmentPct / 100 : 1 - sel.cfg.adjustmentPct / 100));
+                const diff2 = adjTotal - cobrarTotal;
+                return (
+                  <div className="flex justify-between items-center text-xs bg-gray-50 rounded-lg px-3 py-1.5">
+                    <span className="text-gray-500">{sel.cfg.adjustmentType === "discount" ? `Descuento ${sel.cfg.adjustmentPct}%` : `Recargo ${sel.cfg.adjustmentPct}%`}</span>
+                    <span className={`font-semibold ${diff2 < 0 ? "text-green-600" : "text-red-500"}`}>
+                      {diff2 < 0 ? `−${fmt(-diff2)}` : `+${fmt(diff2)}`} = {fmt(adjTotal)}
+                    </span>
+                  </div>
+                );
+              })()}
+              <div className={`grid gap-2 ${activePaymentMethods.length <= 3 ? "grid-cols-3" : "grid-cols-2 sm:grid-cols-3"}`}>
+                {activePaymentMethods.map((m) => {
                   const sel = cobrarPayments.find((p) => p.method === m.value);
                   return (
                     <button key={m.value} onClick={() => toggleCobrarMethod(m.value)}
@@ -924,6 +1222,11 @@ export default function ComandasPage() {
                     >
                       <span className="text-xl">{m.icon}</span>
                       <span className="text-[10px] font-semibold mt-1 leading-tight text-center">{m.label}</span>
+                      {m.cfg?.adjustmentType !== "none" && (
+                        <span className={`text-[9px] font-bold ${m.cfg?.adjustmentType === "discount" ? "text-green-500" : "text-red-400"}`}>
+                          {m.cfg?.adjustmentType === "discount" ? "−" : "+"}{m.cfg?.adjustmentPct}%
+                        </span>
+                      )}
                       {sel && (
                         <input type="number" min="0" value={sel.amount}
                           onChange={(e) => { e.stopPropagation(); updateCobrarAmount(m.value, e.target.value); }}
@@ -935,18 +1238,273 @@ export default function ComandasPage() {
                   );
                 })}
               </div>
-              {cobrarPayments.length > 0 && Math.abs(cobrarTotal - sumCobrar) > 0.01 && (
+              {/* Transfer info in cobrar modal */}
+              {cobrarPayments.find((p) => p.method === "TRANSFERENCIA") && (() => {
+                const cfg = orgConfig?.paymentMethods?.transfer;
+                if (!cfg?.alias && !cfg?.bank) return null;
+                return (
+                  <div className="bg-blue-50 rounded-lg px-3 py-2 text-xs text-blue-700 space-y-0.5">
+                    {cfg.bank && <p>🏦 <span className="font-medium">{cfg.bank}</span></p>}
+                    {cfg.alias && <p>Alias: <span className="font-semibold font-mono">{cfg.alias}</span></p>}
+                    {cfg.holder && <p>Titular: {cfg.holder}</p>}
+                  </div>
+                );
+              })()}
+              {cobrarPayments.find((p) => p.method === "ONLINE") && orgConfig?.paymentMethods?.mercadopago?.link && (
+                <a href={orgConfig.paymentMethods.mercadopago.link} target="_blank" rel="noopener noreferrer"
+                  className="flex items-center gap-1.5 text-xs text-blue-600 hover:underline">
+                  🔵 Abrir link de cobro MP →
+                </a>
+              )}
+              {cobrarPayments.length > 0 && Math.abs(cobrarEffectiveTotal - sumCobrar) > 0.01 && (
                 <p className="text-xs text-rose-600 text-center">
-                  {cobrarTotal - sumCobrar > 0 ? `Faltan ${fmt(cobrarTotal - sumCobrar)}` : `Sobran ${fmt(sumCobrar - cobrarTotal)}`}
+                  {cobrarEffectiveTotal - sumCobrar > 0 ? `Faltan ${fmt(cobrarEffectiveTotal - sumCobrar)}` : `Sobran ${fmt(sumCobrar - cobrarEffectiveTotal)}`}
                 </p>
               )}
             </div>
             <div className="p-4 border-t border-gray-100 shrink-0">
-              <button onClick={confirmCobrar} disabled={cobrarPayments.length === 0 || Math.abs(cobrarTotal - sumCobrar) > 0.01 || cobrarStatus === "loading"}
+              <button onClick={confirmCobrar} disabled={cobrarPayments.length === 0 || Math.abs(cobrarEffectiveTotal - sumCobrar) > 0.01 || cobrarStatus === "loading"}
                 className="w-full py-3.5 bg-emerald-600 text-white rounded-xl font-bold text-base hover:bg-emerald-700 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
               >
-                {cobrarStatus === "loading" ? "Procesando..." : `Confirmar cobro · ${fmt(cobrarTotal)}`}
+                {cobrarStatus === "loading" ? "Procesando..." : `Confirmar cobro · ${fmt(cobrarEffectiveTotal)}`}
               </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Detail modal ─────────────────────────────────────────────────── */}
+      {detailId && detailOrder && (
+        <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center p-0 sm:p-4">
+          <div className="absolute inset-0 bg-black/50" onClick={() => setDetailId(null)} />
+          <div className="relative bg-white rounded-t-2xl sm:rounded-2xl shadow-2xl w-full sm:max-w-md flex flex-col max-h-[92vh] sm:max-h-[85vh]">
+            {/* Header */}
+            <div className="px-5 py-4 border-b border-gray-100 flex items-start justify-between gap-3 shrink-0">
+              <div className="min-w-0 flex-1 space-y-2">
+                <div className="flex items-center gap-2">
+                  {detailOrder.dailyOrderNumber != null && (
+                    <span className="font-mono font-bold text-gray-500 text-sm bg-gray-100 rounded px-2 py-0.5 shrink-0">
+                      #{detailOrder.dailyOrderNumber}
+                    </span>
+                  )}
+                  <input
+                    type="text"
+                    value={detailEditCustomerName}
+                    onChange={(e) => setDetailEditCustomerName(e.target.value)}
+                    placeholder="Nombre del pedido..."
+                    className="flex-1 min-w-0 font-bold text-gray-900 text-base bg-transparent border-b border-dashed border-gray-300 focus:border-emerald-500 focus:outline-none pb-0.5"
+                  />
+                </div>
+                <div className="flex items-center gap-2 flex-wrap">
+                  <span className="text-xs text-gray-400">{relativeTime(detailOrder.date)}</span>
+                  <span className={`text-[10px] font-semibold px-2 py-0.5 rounded-full ${
+                    detailOrder.orderType === "DELIVERY" ? "bg-amber-100 text-amber-700" :
+                    detailOrder.orderType === "TAKEAWAY" ? "bg-blue-100 text-blue-700" :
+                    "bg-gray-100 text-gray-600"
+                  }`}>{ORDER_TYPE_LABELS[detailOrder.orderType]}</span>
+                  {!detailOrder.isPaid && (() => {
+                    const paid = detailOrder.payments.reduce((s, p) => s + Number(p.amount), 0);
+                    const owed = Number(detailOrder.total) - paid;
+                    return paid > 0
+                      ? <span className="text-[10px] bg-amber-100 text-amber-700 rounded-full px-2 py-0.5 font-semibold">Falta {fmt(owed)}</span>
+                      : <span className="text-[10px] bg-rose-100 text-rose-600 rounded-full px-2 py-0.5 font-semibold">Sin cobrar</span>;
+                  })()}
+                  {detailOrder.isPaid && <span className="text-[10px] bg-emerald-100 text-emerald-700 rounded-full px-2 py-0.5 font-semibold">Cobrado</span>}
+                </div>
+              </div>
+              <button onClick={() => setDetailId(null)} className="text-gray-400 hover:text-gray-600 shrink-0 mt-0.5">
+                <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" /></svg>
+              </button>
+            </div>
+
+            <div className="flex-1 overflow-y-auto divide-y divide-gray-100">
+              {/* Editable Items */}
+              <div className="px-5 py-4 space-y-2">
+                <p className="text-xs font-semibold text-gray-400 uppercase tracking-wide">Items</p>
+                {detailEditItems.length === 0 && (
+                  <p className="text-xs text-gray-400 text-center py-2">Sin items</p>
+                )}
+                {detailEditItems.map((item) => (
+                  <div key={`${item.type}-${item.id}`} className="flex items-center gap-2">
+                    <span className="flex-1 text-sm text-gray-800 truncate">
+                      {item.name}
+                      {item.type === "combo" && <span className="ml-1 text-[9px] text-violet-400 font-medium">COMBO</span>}
+                    </span>
+                    <div className="flex items-center gap-1 shrink-0">
+                      <button onClick={() => detailSetQty(item.id, item.type, item.qty - 1)} className="w-6 h-6 rounded border border-gray-200 flex items-center justify-center text-gray-600 hover:bg-gray-50 text-xs font-bold">−</button>
+                      <span className="w-6 text-center text-sm font-semibold tabular-nums">{item.qty}</span>
+                      <button onClick={() => detailSetQty(item.id, item.type, item.qty + 1)} className="w-6 h-6 rounded border border-gray-200 flex items-center justify-center text-gray-600 hover:bg-gray-50 text-xs font-bold">+</button>
+                    </div>
+                    <span className="text-sm font-semibold text-gray-700 w-14 text-right shrink-0 tabular-nums">
+                      {fmt((item.type === "product" ? (products.find(p => p.id === item.id)?.salePrice ?? 0) : (combos.find(c => c.id === item.id)?.salePrice ?? 0)) * item.qty)}
+                    </span>
+                    <button onClick={() => detailSetQty(item.id, item.type, 0)} className="text-gray-300 hover:text-rose-500 transition-colors shrink-0">
+                      <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" /></svg>
+                    </button>
+                  </div>
+                ))}
+
+                {/* Item picker */}
+                <div className="relative pt-1">
+                  <input
+                    type="text"
+                    placeholder="+ Agregar ítem..."
+                    value={detailItemSearch}
+                    onChange={(e) => setDetailItemSearch(e.target.value)}
+                    className="w-full border border-dashed border-gray-300 rounded-lg px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:border-solid bg-gray-50"
+                  />
+                  {detailItemSearch && (() => {
+                    const q2 = detailItemSearch.toLowerCase();
+                    const matchProds  = products.filter(p => p.name.toLowerCase().includes(q2)).slice(0, 5);
+                    const matchCombos = combos.filter(c => c.name.toLowerCase().includes(q2)).slice(0, 3);
+                    if (matchProds.length === 0 && matchCombos.length === 0) return (
+                      <p className="text-xs text-gray-400 text-center py-2">Sin resultados</p>
+                    );
+                    return (
+                      <div className="absolute z-10 left-0 right-0 mt-1 bg-white border border-gray-200 rounded-xl shadow-lg overflow-hidden">
+                        {matchProds.map(p => (
+                          <button key={p.id} onClick={() => detailAddItem({ id: p.id, type: "product", name: p.name, qty: 1 })}
+                            className="w-full flex items-center justify-between px-3 py-2 text-sm hover:bg-emerald-50 text-left transition-colors">
+                            <span className="text-gray-800 truncate">{p.name}</span>
+                            <span className="text-emerald-600 font-semibold text-xs shrink-0 ml-2">{fmt(p.salePrice)}</span>
+                          </button>
+                        ))}
+                        {matchCombos.map(c => (
+                          <button key={c.id} onClick={() => detailAddItem({ id: c.id, type: "combo", name: c.name, qty: 1 })}
+                            className="w-full flex items-center justify-between px-3 py-2 text-sm hover:bg-violet-50 text-left transition-colors">
+                            <span className="text-gray-800 truncate">{c.name} <span className="text-[9px] text-violet-400 font-medium">COMBO</span></span>
+                            <span className="text-violet-600 font-semibold text-xs shrink-0 ml-2">{fmt(c.salePrice)}</span>
+                          </button>
+                        ))}
+                      </div>
+                    );
+                  })()}
+                </div>
+              </div>
+
+              {/* Delivery editable section */}
+              {detailOrder.orderType === "DELIVERY" && (
+                <div className="px-5 py-4 space-y-2">
+                  <p className="text-xs font-semibold text-gray-400 uppercase tracking-wide">Delivery</p>
+                  <input type="text" placeholder="Dirección de entrega..." value={detailEditDeliveryAddress}
+                    onChange={(e) => setDetailEditDeliveryAddress(e.target.value)}
+                    className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500"
+                  />
+                  {repartidores.length > 0 && (
+                    <select value={detailEditRepartidorId} onChange={(e) => setDetailEditRepartidorId(e.target.value)}
+                      className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500"
+                    >
+                      <option value="">🛵 Sin repartidor</option>
+                      {repartidores.map((r) => (
+                        <option key={r.id} value={r.id}>{r.name}{r.phone ? ` · ${r.phone}` : ""}</option>
+                      ))}
+                    </select>
+                  )}
+                </div>
+              )}
+
+              {/* Total + Payments */}
+              <div className="px-5 py-4 space-y-3">
+                <div className="flex items-center justify-between">
+                  <span className="text-sm text-gray-500">Total</span>
+                  <span className="text-xl font-bold text-gray-900">{fmt(getDetailTotal())}</span>
+                </div>
+                {detailOrder.orderType === "DELIVERY" && (Number(orgConfig?.deliveryFee) || 0) > 0 && (
+                  <p className="text-xs text-amber-600 text-right -mt-2">incl. {fmt(Number(orgConfig?.deliveryFee))} de envío</p>
+                )}
+
+                <p className="text-xs font-semibold text-gray-400 uppercase tracking-wide pt-1">Pagos</p>
+                <div className={`grid gap-1.5 ${activePaymentMethods.length <= 3 ? "grid-cols-3" : activePaymentMethods.length === 4 ? "grid-cols-4" : "grid-cols-3"}`}>
+                  {activePaymentMethods.map((m) => {
+                    const sel = detailEditPayments.find(p => p.method === m.value);
+                    return (
+                      <button key={m.value} onClick={() => detailTogglePayment(m.value)}
+                        className={`flex flex-col items-center justify-center py-2.5 px-1 rounded-xl border-2 transition-all ${sel ? "border-emerald-500 bg-emerald-50 text-emerald-700" : "border-gray-100 bg-white text-gray-600 hover:border-emerald-200 hover:bg-emerald-50/40"}`}
+                      >
+                        <span className="text-base">{m.icon}</span>
+                        <span className="text-[10px] font-semibold mt-0.5 leading-tight text-center">{m.label}</span>
+                        {sel && (
+                          <input type="number" min="0" value={sel.amount}
+                            onChange={(e) => { e.stopPropagation(); detailUpdatePaymentAmount(m.value, e.target.value); }}
+                            onClick={(e) => e.stopPropagation()}
+                            className="mt-1 w-full text-center text-xs font-bold bg-emerald-100 rounded-md px-1 py-0.5 focus:outline-none focus:ring-1 focus:ring-emerald-500 tabular-nums"
+                          />
+                        )}
+                      </button>
+                    );
+                  })}
+                </div>
+
+                {/* Balance */}
+                {(() => {
+                  const total2 = getDetailTotal();
+                  const paid   = detailEditPayments.reduce((s, p) => s + (Number(p.amount) || 0), 0);
+                  const bal    = total2 - paid;
+                  if (Math.abs(bal) < 0.01) return (
+                    <p className="text-xs text-emerald-600 text-center font-semibold">✓ Pago completo</p>
+                  );
+                  return (
+                    <p className={`text-xs text-center font-semibold ${bal > 0 ? "text-rose-600" : "text-amber-600"}`}>
+                      {bal > 0 ? `Falta ${fmt(bal)}` : `Sobran ${fmt(-bal)}`}
+                    </p>
+                  );
+                })()}
+
+                {/* Transfer info */}
+                {detailEditPayments.find(p => p.method === "TRANSFERENCIA") && (() => {
+                  const cfg = orgConfig?.paymentMethods?.transfer;
+                  if (!cfg?.alias && !cfg?.bank) return null;
+                  return (
+                    <div className="bg-blue-50 rounded-lg px-3 py-2 text-xs text-blue-700 space-y-0.5">
+                      {cfg.bank && <p>🏦 <span className="font-medium">{cfg.bank}</span></p>}
+                      {cfg.alias && <p>Alias: <span className="font-semibold font-mono">{cfg.alias}</span></p>}
+                      {cfg.holder && <p>Titular: {cfg.holder}</p>}
+                    </div>
+                  );
+                })()}
+                {detailEditPayments.find(p => p.method === "ONLINE") && orgConfig?.paymentMethods?.mercadopago?.link && (
+                  <a href={orgConfig.paymentMethods.mercadopago.link} target="_blank" rel="noopener noreferrer"
+                    className="flex items-center gap-1.5 text-xs text-blue-600 hover:underline">
+                    🔵 Abrir link de cobro MP →
+                  </a>
+                )}
+              </div>
+            </div>
+
+            {/* Footer: save + actions */}
+            <div className="p-4 border-t border-gray-100 shrink-0 space-y-2">
+              <button
+                onClick={saveDetailEdits}
+                disabled={detailSaving || detailEditItems.length === 0}
+                className="w-full py-2.5 bg-emerald-600 text-white rounded-xl text-sm font-semibold hover:bg-emerald-700 disabled:opacity-40 transition-colors"
+              >
+                {detailSaving ? "Guardando..." : "Guardar cambios"}
+              </button>
+              <div className="flex gap-2">
+                {STATUS_NEXT[detailOrder.orderStatus] && (
+                  <button
+                    onClick={async () => { await moveOrder(detailOrder.id, STATUS_NEXT[detailOrder.orderStatus]); setDetailId(null); }}
+                    disabled={movingId === detailOrder.id}
+                    className={`flex-1 py-2 rounded-xl text-sm font-semibold transition-colors disabled:opacity-40 ${STATUS_NEXT_BTN[detailOrder.orderStatus]}`}
+                  >
+                    {movingId === detailOrder.id ? "..." : STATUS_NEXT_LABEL[detailOrder.orderStatus]}
+                  </button>
+                )}
+                {!detailOrder.isPaid && (
+                  <button
+                    onClick={() => { setDetailId(null); setCobrandoId(detailOrder.id); setCobrarPayments([]); }}
+                    className="flex-1 py-2 rounded-xl text-sm font-semibold bg-gray-100 text-gray-700 hover:bg-gray-200 transition-colors"
+                  >
+                    Cobrar
+                  </button>
+                )}
+                <button
+                  onClick={() => { setDetailId(null); setCancellingId(detailOrder.id); }}
+                  className="px-3 py-2 rounded-xl text-sm font-semibold text-rose-500 hover:bg-rose-50 transition-colors"
+                >
+                  ✕
+                </button>
+              </div>
             </div>
           </div>
         </div>
@@ -962,7 +1520,7 @@ export default function ComandasPage() {
               {cancellingOrder.customer?.name ?? cancellingOrder.customerName ?? "Anónimo"} — {fmt(Number(cancellingOrder.total))}
             </p>
 
-            {cancellingOrder.orderStatus === "EN_PREPARACION" && (
+            {(cancellingOrder.orderStatus === "EN_PREPARACION" || cancellingOrder.orderStatus === "LISTO") && (
               <button
                 onClick={() => setCancelRollback(!cancelRollback)}
                 className={`w-full flex items-center justify-between gap-3 p-3 rounded-xl border-2 transition-all ${cancelRollback ? "border-amber-400 bg-amber-50" : "border-gray-200 bg-gray-50"}`}

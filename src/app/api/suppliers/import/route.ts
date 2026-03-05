@@ -1,8 +1,11 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { parseExcel } from "@/utils/excel";
+import { requireOrg } from "@/lib/requireOrg";
 
-export async function POST(req: NextRequest) {
+export async function POST(req: NextRequest) {  let orgId: string;
+  try { orgId = requireOrg(req); } catch (e) { return e as Response; }
+
   try {
     const formData = await req.formData();
     const file = formData.get("file") as File | null;
@@ -32,12 +35,12 @@ export async function POST(req: NextRequest) {
 
       try {
         const existing = await prisma.supplier.findFirst({
-          where: { name: { equals: name, mode: "insensitive" } },
+          where: { organizationId: orgId, name: { equals: name, mode: "insensitive" } },
         });
 
         if (existing) {
           await prisma.supplier.update({
-            where: { id: existing.id },
+            where: { id: existing.id, organizationId: orgId },
             data: {
               phone: phone || existing.phone,
               email: email || existing.email,
@@ -49,6 +52,7 @@ export async function POST(req: NextRequest) {
           await prisma.supplier.create({
             data: {
               name,
+              organizationId: orgId,
               phone: phone || null,
               email: email || null,
               notes: notes || null,
