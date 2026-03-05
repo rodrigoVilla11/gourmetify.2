@@ -1,7 +1,7 @@
 "use client";
 import { useState, useEffect } from "react";
 import Link from "next/link";
-import { usePathname, useRouter } from "next/navigation";
+import { usePathname } from "next/navigation";
 import { cn } from "@/utils/cn";
 import { NotificationBell } from "./NotificationBell";
 import { PLAN_FEATURES, PLAN_LABELS, minPlanFor, type Plan, type PlanFeatures } from "@/lib/plans";
@@ -380,7 +380,6 @@ interface SidebarProps {
 
 export function Sidebar({ role, username, orgName, plan = "FREE", orgSlug }: SidebarProps) {
   const pathname = usePathname();
-  const router = useRouter();
   const [isOpen, setIsOpen] = useState(false);
 
   useEffect(() => {
@@ -389,7 +388,7 @@ export function Sidebar({ role, username, orgName, plan = "FREE", orgSlug }: Sid
 
   const handleLogout = async () => {
     await fetch("/api/auth/logout", { method: "POST" });
-    router.push("/login");
+    window.location.href = "/login";
   };
 
   const isSuperAdmin = role === "SUPERADMIN";

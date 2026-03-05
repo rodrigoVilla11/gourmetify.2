@@ -11,6 +11,7 @@ type ResultadosData = {
     paymentMethods: { method: string; amount: number }[];
     expenseCategories: { category: string; amount: number }[];
     salaries: { name: string; hours: number; amount: number }[];
+    supplierPayments: { supplier: string; amount: number }[];
   };
 };
 
@@ -187,6 +188,21 @@ export default function ResultadosPage() {
                         <div key={ec.category} className="flex justify-between text-sm">
                           <span className="text-gray-600">{ec.category}</span>
                           <span className="text-gray-800">{fmt(ec.amount)}</span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {/* Supplier payments breakdown */}
+                {data.breakdowns.supplierPayments.length > 0 && (
+                  <div>
+                    <p className="text-xs font-semibold text-gray-400 uppercase tracking-wide mb-2">Pagos a facturas por proveedor</p>
+                    <div className="space-y-1">
+                      {data.breakdowns.supplierPayments.map((sp) => (
+                        <div key={sp.supplier} className="flex justify-between text-sm">
+                          <span className="text-gray-600">{sp.supplier}</span>
+                          <span className="text-gray-800">{fmt(sp.amount)}</span>
                         </div>
                       ))}
                     </div>

@@ -142,10 +142,12 @@ export default function CocinaPage() {
   const [lastRefresh, setLastRefresh] = useState(new Date());
   const [soundOn, setSoundOn] = useState(true);
   const [updating, setUpdating] = useState<Set<string>>(new Set());
+  const [isFullscreen, setIsFullscreen] = useState(false);
   // Local "done" state per order: orderId → Set of done productIds
   const [doneItems, setDoneItems] = useState<Record<string, Set<string>>>({});
   const prevIds = useRef<Set<string>>(new Set());
   const soundRef = useRef(soundOn);
+  const containerRef = useRef<HTMLDivElement>(null);
   soundRef.current = soundOn;
 
   const fetchOrders = useCallback(async (initial = false) => {
@@ -242,11 +244,21 @@ export default function CocinaPage() {
     });
   }
 
+  useEffect(() => {
+    const onFsChange = () => {
+      if (!document.fullscreenElement) setIsFullscreen(false);
+    };
+    document.addEventListener("fullscreenchange", onFsChange);
+    return () => document.removeEventListener("fullscreenchange", onFsChange);
+  }, []);
+
   function toggleFullscreen() {
-    if (!document.fullscreenElement) {
-      document.documentElement.requestFullscreen().catch(() => {});
+    if (!isFullscreen) {
+      setIsFullscreen(true);
+      containerRef.current?.requestFullscreen().catch(() => {});
     } else {
-      document.exitFullscreen();
+      setIsFullscreen(false);
+      if (document.fullscreenElement) document.exitFullscreen();
     }
   }
 
@@ -265,7 +277,11 @@ export default function CocinaPage() {
   }
 
   return (
-    <div className="flex flex-col h-full" style={{ minHeight: "calc(100vh - 56px)" }}>
+    <div
+      ref={containerRef}
+      className={`flex flex-col ${isFullscreen ? "fixed inset-0 z-[9999] bg-[#0f1f1a]" : "h-full"}`}
+      style={isFullscreen ? undefined : { minHeight: "calc(100vh - 56px)" }}
+    >
       {/* Header */}
       <div className="flex items-center justify-between px-5 py-3 border-b border-white/10 bg-[#0f1f1a] flex-shrink-0">
         <div className="flex items-center gap-3">
@@ -312,12 +328,18 @@ export default function CocinaPage() {
 
           <button
             onClick={toggleFullscreen}
-            title="Pantalla completa"
+            title={isFullscreen ? "Salir de pantalla completa" : "Pantalla completa"}
             className="p-2 rounded-lg bg-white/8 hover:bg-white/15 text-white/60 hover:text-white transition-colors"
           >
-            <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 8V4m0 0h4M4 4l5 5m11-1V4m0 0h-4m4 0l-5 5M4 16v4m0 0h4m-4 0l5-5m11 5l-5-5m5 5v-4m0 4h-4" />
-            </svg>
+            {isFullscreen ? (
+              <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 9V4m0 5H4m0 0l5-5M9 15v5m0-5H4m0 0l5 5m6-10h5m-5 0V4m0 5l5-5m0 11h-5m5 0v5m0-5l-5 5" />
+              </svg>
+            ) : (
+              <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 8V4m0 0h4M4 4l5 5m11-1V4m0 0h-4m4 0l-5 5M4 16v4m0 0h4m-4 0l5-5m11 5l-5-5m5 5v-4m0 4h-4" />
+              </svg>
+            )}
           </button>
         </div>
       </div>

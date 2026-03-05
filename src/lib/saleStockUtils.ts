@@ -242,15 +242,16 @@ export async function rollbackSaleStock(
   tx: TxClient,
   saleId: string,
   items: { productId: string; quantity: number }[],
-  comboItems: { comboId: string; quantity: number }[]
+  comboItems: { comboId: string; quantity: number }[],
+  orgId: string
 ): Promise<void> {
   // Rollback ingredients via StockMovement records
-  const stockMoves = await tx.stockMovement.findMany({ where: { refId: saleId, type: "SALE" } });
+  const stockMoves = await tx.stockMovement.findMany({ where: { refId: saleId, type: "SALE", organizationId: orgId } });
   for (const move of stockMoves) {
     const toRestore = -Number(move.delta); // delta is negative (SALE deduction), so negate it
     await tx.ingredient.update({ where: { id: move.ingredientId }, data: { onHand: { increment: toRestore } } });
     await tx.stockMovement.create({
-      data: { ingredientId: move.ingredientId, type: "ADJUSTMENT", delta: toRestore, reason: `Rollback venta ${saleId}`, refId: saleId },
+      data: { organizationId: orgId, ingredientId: move.ingredientId, type: "ADJUSTMENT", delta: toRestore, reason: `Rollback venta ${saleId}`, refId: saleId },
     });
   }
 
@@ -297,7 +298,7 @@ export async function rollbackSaleStock(
   for (const [preparationId, info] of Array.from(prepDeductionMap.entries())) {
     await tx.preparation.update({ where: { id: preparationId }, data: { onHand: { increment: info.delta } } });
     await tx.preparationMovement.create({
-      data: { preparationId, type: "ADJUSTMENT", delta: info.delta, reason: `Rollback venta ${saleId}` },
+      data: { organizationId: orgId, preparationId, type: "ADJUSTMENT", delta: info.delta, reason: `Rollback venta ${saleId}` },
     });
   }
 }

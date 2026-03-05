@@ -51,9 +51,12 @@ function getRange(period: Period): { from: string; to: string } {
 }
 
 export default function ConsumoPage() {
-  const [period, setPeriod] = useState<Period>("month");
-  const [from, setFrom] = useState(() => getRange("month").from);
-  const [to, setTo] = useState(() => getRange("month").to);
+  const [role, setRole] = useState<string | null>(null);
+  const isAdmin = role === "ADMIN";
+
+  const [period, setPeriod] = useState<Period>("today");
+  const [from, setFrom] = useState(() => getRange("today").from);
+  const [to, setTo] = useState(() => getRange("today").to);
 
   const [rows, setRows] = useState<ConsumoRow[]>([]);
   const [prepRows, setPrepRows] = useState<PrepConsumoRow[]>([]);
@@ -61,6 +64,19 @@ export default function ConsumoPage() {
   const [totalIngCost, setTotalIngCost] = useState(0);
   const [totalPrepCost, setTotalPrepCost] = useState(0);
   const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    fetch("/api/auth/me").then((r) => r.json()).then((s) => {
+      setRole(s.role ?? null);
+      // ADMIN defaults to month; others stay on today
+      if (s.role === "ADMIN") {
+        const range = getRange("month");
+        setPeriod("month");
+        setFrom(range.from);
+        setTo(range.to);
+      }
+    }).catch(() => {});
+  }, []);
 
   const fetchData = useCallback(async () => {
     setLoading(true);
@@ -226,51 +242,58 @@ export default function ConsumoPage() {
         <p className="text-sm text-gray-500 mt-1">Ingredientes y preparaciones consumidos por ventas</p>
       </div>
 
-      {/* Period selector */}
-      <div className="bg-white rounded-xl border border-gray-200 p-4 space-y-3">
-        <div className="flex flex-wrap gap-2">
-          {(["today", "week", "month", "custom"] as Period[]).map((p) => (
-            <button
-              key={p}
-              onClick={() => handlePeriodClick(p)}
-              className={`px-4 py-1.5 rounded-full text-sm font-medium transition-colors ${
-                period === p
-                  ? "bg-emerald-600 text-white"
-                  : "bg-gray-100 text-gray-600 hover:bg-gray-200"
-              }`}
-            >
-              {PERIOD_LABELS[p]}
-            </button>
-          ))}
-        </div>
-
-        {period === "custom" && (
-          <div className="flex flex-wrap gap-3 items-end pt-1">
-            <div className="w-full sm:w-auto">
-              <label className="block text-xs font-medium text-gray-600 mb-1">Desde</label>
-              <input
-                type="date"
-                value={from}
-                onChange={(e) => setFrom(e.target.value)}
-                className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500"
-              />
-            </div>
-            <div className="w-full sm:w-auto">
-              <label className="block text-xs font-medium text-gray-600 mb-1">Hasta</label>
-              <input
-                type="date"
-                value={to}
-                onChange={(e) => setTo(e.target.value)}
-                className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500"
-              />
-            </div>
+      {/* Period selector — ADMIN only */}
+      {isAdmin ? (
+        <div className="bg-white rounded-xl border border-gray-200 p-4 space-y-3">
+          <div className="flex flex-wrap gap-2">
+            {(["today", "week", "month", "custom"] as Period[]).map((p) => (
+              <button
+                key={p}
+                onClick={() => handlePeriodClick(p)}
+                className={`px-4 py-1.5 rounded-full text-sm font-medium transition-colors ${
+                  period === p
+                    ? "bg-emerald-600 text-white"
+                    : "bg-gray-100 text-gray-600 hover:bg-gray-200"
+                }`}
+              >
+                {PERIOD_LABELS[p]}
+              </button>
+            ))}
           </div>
-        )}
 
-        {period !== "custom" && (
-          <p className="text-xs text-gray-400">{from} → {to}</p>
-        )}
-      </div>
+          {period === "custom" && (
+            <div className="flex flex-wrap gap-3 items-end pt-1">
+              <div className="w-full sm:w-auto">
+                <label className="block text-xs font-medium text-gray-600 mb-1">Desde</label>
+                <input
+                  type="date"
+                  value={from}
+                  onChange={(e) => setFrom(e.target.value)}
+                  className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500"
+                />
+              </div>
+              <div className="w-full sm:w-auto">
+                <label className="block text-xs font-medium text-gray-600 mb-1">Hasta</label>
+                <input
+                  type="date"
+                  value={to}
+                  onChange={(e) => setTo(e.target.value)}
+                  className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500"
+                />
+              </div>
+            </div>
+          )}
+
+          {period !== "custom" && (
+            <p className="text-xs text-gray-400">{from} → {to}</p>
+          )}
+        </div>
+      ) : (
+        <div className="bg-white rounded-xl border border-gray-200 px-4 py-3 flex items-center gap-2">
+          <span className="text-sm font-medium text-emerald-700 bg-emerald-50 px-3 py-1 rounded-full">Hoy</span>
+          <span className="text-xs text-gray-400">{from}</span>
+        </div>
+      )}
 
       {/* KPIs */}
       {!loading && (

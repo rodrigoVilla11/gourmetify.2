@@ -120,7 +120,8 @@ export default function ComandasPage() {
   const [movingId, setMovingId]           = useState<string | null>(null);
   const [cancellingId, setCancellingId]   = useState<string | null>(null);
   const [cancelRollback, setCancelRollback] = useState(true);
-  const [cancellingStatus, setCancellingStatus] = useState<"idle" | "loading">("idle");
+  const [cancellingStatus, setCancellingStatus] = useState<"idle" | "loading" | "error">("idle");
+  const [cancelError, setCancelError]     = useState<string | null>(null);
   const prevNuevoIds = useRef<Set<string>>(new Set());
 
   // ── Detail modal state ─────────────────────────────────────────────────────
@@ -135,9 +136,19 @@ export default function ComandasPage() {
   const [detailSaving, setDetailSaving]                     = useState(false);
 
   // ── Cobrar state ───────────────────────────────────────────────────────────
-  const [cobrandoId, setCobrandoId]     = useState<string | null>(null);
+  const [cobrandoId, setCobrandoId]         = useState<string | null>(null);
   const [cobrarPayments, setCobrarPayments] = useState<Payment[]>([]);
-  const [cobrarStatus, setCobrarStatus] = useState<"idle" | "loading">("idle");
+  const [cobrarStatus, setCobrarStatus]     = useState<"idle" | "loading">("idle");
+  const [cobrarIsCobrado, setCobrarIsCobrado] = useState(true);
+
+  // ── Nueva comanda "cobrado" toggle ─────────────────────────────────────────
+  const [isCobrado, setIsCobrado] = useState(false);
+
+  // ── Cancel payments rollback ────────────────────────────────────────────────
+  const [cancelRollbackPayments, setCancelRollbackPayments] = useState(true);
+
+  // ── Unpay (reverse cobro) ───────────────────────────────────────────────────
+  const [unpayingId, setUnpayingId] = useState<string | null>(null);
 
   // ── Customer state ─────────────────────────────────────────────────────────
   const [customerPhone, setCustomerPhone]               = useState("");
@@ -235,15 +246,19 @@ export default function ComandasPage() {
   }, [pageTab, fetchKanban]);
 
   // ── Move order ─────────────────────────────────────────────────────────────
-  async function moveOrder(id: string, newStatus: string, rollbackStock?: boolean) {
+  async function moveOrder(id: string, newStatus: string, rollbackStock?: boolean, rollbackPayments?: boolean): Promise<boolean> {
     setMovingId(id);
     try {
       const order = kanbanOrders.find((o) => o.id === id);
-      await fetch(`/api/sales/${id}/status`, {
+      const res = await fetch(`/api/sales/${id}/status`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ status: newStatus, rollbackStock }),
+        body: JSON.stringify({ status: newStatus, rollbackStock, rollbackPayments }),
       });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error(err?.error ?? `Error ${res.status}`);
+      }
       if (newStatus === "EN_PREPARACION" && order) {
         printKitchenTicket({
           orderId: order.id,
@@ -259,6 +274,9 @@ export default function ComandasPage() {
         });
       }
       await fetchKanban();
+      return true;
+    } catch (e) {
+      throw e;
     } finally {
       setMovingId(null);
     }
@@ -272,7 +290,7 @@ export default function ComandasPage() {
     const o = kanbanOrders.find((x) => x.id === id);
     if (!o || o.orderStatus === newStatus) return;
     if (STATUS_NEXT[o.orderStatus] !== newStatus) return; // only adjacent
-    moveOrder(id, newStatus);
+    moveOrder(id, newStatus).catch(() => {});
   }
 
   // ── Cancel ─────────────────────────────────────────────────────────────────
@@ -280,11 +298,27 @@ export default function ComandasPage() {
     if (!cancellingId) return;
     const o = kanbanOrders.find((x) => x.id === cancellingId);
     setCancellingStatus("loading");
+    setCancelError(null);
     const needsRollback = o?.orderStatus === "EN_PREPARACION" || o?.orderStatus === "LISTO";
-    await moveOrder(cancellingId, "CANCELADO", needsRollback ? cancelRollback : false);
-    setCancellingStatus("idle");
-    setCancellingId(null);
-    setCancelRollback(true);
+    const needsPaymentRollback = (o?.isPaid ?? false) ? cancelRollbackPayments : false;
+    try {
+      await moveOrder(cancellingId, "CANCELADO", needsRollback ? cancelRollback : false, needsPaymentRollback);
+      setCancellingStatus("idle");
+      setCancellingId(null);
+      setCancelRollback(true);
+      setCancelRollbackPayments(true);
+    } catch (e) {
+      setCancellingStatus("error");
+      setCancelError(e instanceof Error ? e.message : "Error al cancelar");
+    }
+  }
+
+  // ── Unpay ──────────────────────────────────────────────────────────────────
+  async function unpayOrder(id: string) {
+    setUnpayingId(id);
+    await fetch(`/api/sales/${id}/pay`, { method: "DELETE" });
+    await fetchKanban();
+    setUnpayingId(null);
   }
 
   // ── Detail modal helpers ────────────────────────────────────────────────────
@@ -358,7 +392,6 @@ export default function ComandasPage() {
         customerName:    detailEditCustomerName || null,
         newItems:      detailEditItems.filter(i => i.type === "product").map(i => ({ productId: i.id, quantity: i.qty })),
         newComboItems: detailEditItems.filter(i => i.type === "combo").map(i => ({ comboId: i.id, quantity: i.qty })),
-        newPayments:   detailEditPayments.filter(p => Number(p.amount) > 0).map(p => ({ paymentMethod: p.method, amount: Number(p.amount) })),
       }),
     });
     setDetailSaving(false);
@@ -493,14 +526,20 @@ export default function ComandasPage() {
   async function confirmCobrar() {
     if (!cobrandoId || cobrarPayments.length === 0) return;
     setCobrarStatus("loading");
-    const savedOrder   = cobrarOrder;
-    const savedTotal   = cobrarTotal;
-    const savedPayments = cobrarPayments.filter((p) => p.method && Number(p.amount) > 0);
+    const savedOrder        = cobrarOrder;
+    const savedTotal        = cobrarEffectiveTotal;
+    const savedPayments     = cobrarIsCobrado
+      ? cobrarPayments.filter((p) => p.method && Number(p.amount) > 0)
+      : cobrarPayments.filter((p) => p.method);
+    const effectiveTotalNow = cobrarEffectiveTotal;
+    const rawTotalNow       = cobrarTotal;
     const res = await fetch(`/api/sales/${cobrandoId}/pay`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
-        payments: savedPayments.map((p) => ({ paymentMethod: p.method, amount: Number(p.amount) })),
+        payments: savedPayments.map((p) => ({ paymentMethod: p.method, amount: Number(p.amount) || 0 })),
+        isPaid: cobrarIsCobrado,
+        ...(cobrarIsCobrado && effectiveTotalNow !== rawTotalNow ? { total: effectiveTotalNow } : {}),
       }),
     });
     if (res.ok) {
@@ -521,6 +560,9 @@ export default function ComandasPage() {
           payments: savedPayments.map((p) => ({ method: p.method, amount: Number(p.amount) })),
         });
       }
+    } else {
+      const err = await res.json().catch(() => ({}));
+      alert(`Error al cobrar: ${err?.error ?? res.status}`);
     }
     setCobrarStatus("idle");
   }
@@ -572,21 +614,24 @@ export default function ComandasPage() {
   // ── Submit ─────────────────────────────────────────────────────────────────
   async function handleSubmit(opts: { withPayment: boolean }) {
     if (order.length === 0) return;
+    const withCobrado = opts.withPayment && isCobrado;
     const paymentsToSend = opts.withPayment
-      ? payments.filter((p) => p.method && Number(p.amount) > 0)
+      ? payments.filter((p) => p.method)
       : [];
     if (opts.withPayment && paymentsToSend.length === 0) {
       setStatus("error"); setMessage("Seleccioná al menos un método de pago"); return;
     }
-    if (opts.withPayment && Math.abs(effectiveTotal - paymentsToSend.reduce((s, p) => s + p.amount, 0)) > 0.01) {
-      const d = effectiveTotal - paymentsToSend.reduce((s, p) => s + p.amount, 0);
+    // Validate amounts only when actually collecting payment
+    if (withCobrado && Math.abs(effectiveTotal - paymentsToSend.reduce((s, p) => s + (Number(p.amount) || 0), 0)) > 0.01) {
+      const d = effectiveTotal - paymentsToSend.reduce((s, p) => s + (Number(p.amount) || 0), 0);
       setStatus("error"); setMessage(d > 0 ? `Faltan ${fmt(d)} para completar el pago` : `El pago excede el total por ${fmt(-d)}`); return;
     }
     setStatus("loading");
     const body = {
       items:       order.filter((o) => o.type === "product").map((o) => ({ productId: o.id, quantity: o.quantity })),
       comboItems:  order.filter((o) => o.type === "combo").map((o)   => ({ comboId: o.id,   quantity: o.quantity })),
-      payments:    paymentsToSend.map((p) => ({ paymentMethod: p.method, amount: Number(p.amount) })),
+      payments:    paymentsToSend.map((p) => ({ paymentMethod: p.method, amount: Number(p.amount) || 0 })),
+      isPaid:      withCobrado,
       orderType,
       deliveryAddress: orderType === "DELIVERY" && deliveryAddress.trim() ? deliveryAddress.trim() : null,
       repartidorId: orderType === "DELIVERY" && repartidorId ? repartidorId : null,
@@ -599,7 +644,7 @@ export default function ComandasPage() {
       setSaleId(data.sale?.id ?? "");
       setWarnings((data.warnings ?? []).map((w: { name: string }) => w.name));
       setStatus("success");
-      setMessage(opts.withPayment ? "¡Venta registrada y cobrada!" : "¡Pedido comandado!");
+      setMessage(withCobrado ? "¡Venta registrada y cobrada!" : opts.withPayment ? "¡Pedido guardado con método de pago!" : "¡Pedido comandado!");
       fetchKanban(); // update badge
     } else {
       setStatus("error");
@@ -609,7 +654,7 @@ export default function ComandasPage() {
 
   function resetOrder() {
     setOrder([]); setPayments([]); setStatus("idle"); setMessage(""); setSaleId(""); setWarnings([]); setShowOrder(false);
-    clearCustomer(); setCustomerName(""); setOrderType("SALON"); setDeliveryAddress(""); setRepartidorId("");
+    clearCustomer(); setCustomerName(""); setOrderType("SALON"); setDeliveryAddress(""); setRepartidorId(""); setIsCobrado(false);
   }
 
   // ── Filtered items ─────────────────────────────────────────────────────────
@@ -866,6 +911,19 @@ export default function ComandasPage() {
             {payments.length > 0 && Math.abs(diff) > 0.01 && (
               <p className="text-xs text-rose-600 text-center">{diff > 0 ? `Faltan ${fmt(diff)}` : `Sobran ${fmt(-diff)}`}</p>
             )}
+            {/* "Cobrado" toggle — shown when payment method selected */}
+            {payments.length > 0 && (
+              <button onClick={() => setIsCobrado(!isCobrado)}
+                className={`w-full flex items-center justify-between gap-3 px-3 py-2 rounded-xl border-2 transition-all ${isCobrado ? "border-emerald-400 bg-emerald-50" : "border-gray-200 bg-gray-50"}`}
+              >
+                <span className={`text-xs font-semibold ${isCobrado ? "text-emerald-700" : "text-gray-500"}`}>
+                  {isCobrado ? "Cobrado" : "Pendiente de cobro"}
+                </span>
+                <div className={`w-8 h-5 rounded-full flex items-center px-0.5 transition-colors ${isCobrado ? "bg-emerald-500" : "bg-gray-300"}`}>
+                  <div className={`w-4 h-4 rounded-full bg-white shadow transition-transform ${isCobrado ? "translate-x-3" : "translate-x-0"}`} />
+                </div>
+              </button>
+            )}
             {status === "error" && (
               <p className="text-xs text-rose-600 text-center bg-rose-50 rounded-lg px-3 py-2">{message}</p>
             )}
@@ -875,10 +933,11 @@ export default function ComandasPage() {
               >
                 {status === "loading" ? "..." : "Comandar"}
               </button>
-              <button onClick={() => handleSubmit({ withPayment: true })} disabled={order.length === 0 || status === "loading" || payments.length === 0 || Math.abs(diff) > 0.01}
-                className="flex-1 py-2.5 bg-emerald-600 text-white rounded-xl font-bold text-sm hover:bg-emerald-700 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+              <button onClick={() => handleSubmit({ withPayment: true })}
+                disabled={order.length === 0 || status === "loading" || payments.length === 0 || (isCobrado && Math.abs(diff) > 0.01)}
+                className={`flex-1 py-2.5 rounded-xl font-bold text-sm disabled:opacity-40 disabled:cursor-not-allowed transition-colors ${isCobrado ? "bg-emerald-600 hover:bg-emerald-700 text-white" : "bg-blue-500 hover:bg-blue-600 text-white"}`}
               >
-                {status === "loading" ? "..." : `Cobrar · ${fmt(total)}`}
+                {status === "loading" ? "..." : isCobrado ? `Cobrar · ${fmt(effectiveTotal)}` : "Guardar método"}
               </button>
             </div>
           </div>
@@ -999,14 +1058,24 @@ export default function ComandasPage() {
                                     {STATUS_NEXT_LABEL[ko.orderStatus]}
                                   </button>
                                 )}
-                                {!ko.isPaid && (
-                                  <button
-                                    onClick={(e) => { e.stopPropagation(); setCobrandoId(ko.id); setCobrarPayments([]); }}
-                                    className="px-2.5 py-1.5 rounded-lg text-xs font-semibold bg-gray-100 text-gray-700 hover:bg-gray-200 transition-colors"
-                                  >
-                                    Cobrar
-                                  </button>
-                                )}
+                                <button
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    if (ko.isPaid) {
+                                      unpayOrder(ko.id);
+                                    } else {
+                                      setCobrandoId(ko.id); setCobrarPayments([]); setCobrarIsCobrado(true);
+                                    }
+                                  }}
+                                  disabled={unpayingId === ko.id}
+                                  title={ko.isPaid ? "Cobrado — click para revertir" : "Cobrar"}
+                                  className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-semibold transition-colors ${ko.isPaid ? "bg-emerald-50 text-emerald-700 hover:bg-emerald-100" : "bg-gray-100 text-gray-700 hover:bg-gray-200"} disabled:opacity-40`}
+                                >
+                                  <span className={`w-3.5 h-3.5 rounded border-2 flex items-center justify-center shrink-0 ${ko.isPaid ? "bg-emerald-500 border-emerald-500" : "border-gray-400"}`}>
+                                    {ko.isPaid && <svg className="w-2.5 h-2.5 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={3}><path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7"/></svg>}
+                                  </span>
+                                  {unpayingId === ko.id ? "..." : ko.isPaid ? "Cobrado" : "Cobrar"}
+                                </button>
                                 <button
                                   onClick={(e) => { e.stopPropagation(); setCancellingId(ko.id); }}
                                   className="px-2 py-1.5 rounded-lg text-xs font-semibold text-rose-500 hover:bg-rose-50 transition-colors"
@@ -1256,17 +1325,29 @@ export default function ComandasPage() {
                   🔵 Abrir link de cobro MP →
                 </a>
               )}
-              {cobrarPayments.length > 0 && Math.abs(cobrarEffectiveTotal - sumCobrar) > 0.01 && (
+              {cobrarIsCobrado && cobrarPayments.length > 0 && Math.abs(cobrarEffectiveTotal - sumCobrar) > 0.01 && (
                 <p className="text-xs text-rose-600 text-center">
                   {cobrarEffectiveTotal - sumCobrar > 0 ? `Faltan ${fmt(cobrarEffectiveTotal - sumCobrar)}` : `Sobran ${fmt(sumCobrar - cobrarEffectiveTotal)}`}
                 </p>
               )}
+              {/* Cobrado toggle */}
+              <button onClick={() => setCobrarIsCobrado(!cobrarIsCobrado)}
+                className={`w-full flex items-center justify-between gap-3 px-3 py-2.5 rounded-xl border-2 transition-all ${cobrarIsCobrado ? "border-emerald-400 bg-emerald-50" : "border-gray-200 bg-gray-50"}`}
+              >
+                <span className={`text-sm font-semibold ${cobrarIsCobrado ? "text-emerald-700" : "text-gray-500"}`}>
+                  {cobrarIsCobrado ? "Cobrado" : "Pendiente de cobro"}
+                </span>
+                <div className={`w-10 h-6 rounded-full flex items-center px-0.5 transition-colors ${cobrarIsCobrado ? "bg-emerald-500" : "bg-gray-300"}`}>
+                  <div className={`w-5 h-5 rounded-full bg-white shadow transition-transform ${cobrarIsCobrado ? "translate-x-4" : "translate-x-0"}`} />
+                </div>
+              </button>
             </div>
             <div className="p-4 border-t border-gray-100 shrink-0">
-              <button onClick={confirmCobrar} disabled={cobrarPayments.length === 0 || Math.abs(cobrarEffectiveTotal - sumCobrar) > 0.01 || cobrarStatus === "loading"}
-                className="w-full py-3.5 bg-emerald-600 text-white rounded-xl font-bold text-base hover:bg-emerald-700 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+              <button onClick={confirmCobrar}
+                disabled={cobrarPayments.length === 0 || (cobrarIsCobrado && Math.abs(cobrarEffectiveTotal - sumCobrar) > 0.01) || cobrarStatus === "loading"}
+                className={`w-full py-3.5 text-white rounded-xl font-bold text-base disabled:opacity-40 disabled:cursor-not-allowed transition-colors ${cobrarIsCobrado ? "bg-emerald-600 hover:bg-emerald-700" : "bg-blue-500 hover:bg-blue-600"}`}
               >
-                {cobrarStatus === "loading" ? "Procesando..." : `Confirmar cobro · ${fmt(cobrarEffectiveTotal)}`}
+                {cobrarStatus === "loading" ? "Procesando..." : cobrarIsCobrado ? `Confirmar cobro · ${fmt(cobrarEffectiveTotal)}` : "Guardar método de pago"}
               </button>
             </div>
           </div>
@@ -1413,61 +1494,23 @@ export default function ComandasPage() {
                   <p className="text-xs text-amber-600 text-right -mt-2">incl. {fmt(Number(orgConfig?.deliveryFee))} de envío</p>
                 )}
 
-                <p className="text-xs font-semibold text-gray-400 uppercase tracking-wide pt-1">Pagos</p>
-                <div className={`grid gap-1.5 ${activePaymentMethods.length <= 3 ? "grid-cols-3" : activePaymentMethods.length === 4 ? "grid-cols-4" : "grid-cols-3"}`}>
-                  {activePaymentMethods.map((m) => {
-                    const sel = detailEditPayments.find(p => p.method === m.value);
-                    return (
-                      <button key={m.value} onClick={() => detailTogglePayment(m.value)}
-                        className={`flex flex-col items-center justify-center py-2.5 px-1 rounded-xl border-2 transition-all ${sel ? "border-emerald-500 bg-emerald-50 text-emerald-700" : "border-gray-100 bg-white text-gray-600 hover:border-emerald-200 hover:bg-emerald-50/40"}`}
-                      >
-                        <span className="text-base">{m.icon}</span>
-                        <span className="text-[10px] font-semibold mt-0.5 leading-tight text-center">{m.label}</span>
-                        {sel && (
-                          <input type="number" min="0" value={sel.amount}
-                            onChange={(e) => { e.stopPropagation(); detailUpdatePaymentAmount(m.value, e.target.value); }}
-                            onClick={(e) => e.stopPropagation()}
-                            className="mt-1 w-full text-center text-xs font-bold bg-emerald-100 rounded-md px-1 py-0.5 focus:outline-none focus:ring-1 focus:ring-emerald-500 tabular-nums"
-                          />
-                        )}
-                      </button>
-                    );
-                  })}
-                </div>
-
-                {/* Balance */}
-                {(() => {
-                  const total2 = getDetailTotal();
-                  const paid   = detailEditPayments.reduce((s, p) => s + (Number(p.amount) || 0), 0);
-                  const bal    = total2 - paid;
-                  if (Math.abs(bal) < 0.01) return (
-                    <p className="text-xs text-emerald-600 text-center font-semibold">✓ Pago completo</p>
-                  );
-                  return (
-                    <p className={`text-xs text-center font-semibold ${bal > 0 ? "text-rose-600" : "text-amber-600"}`}>
-                      {bal > 0 ? `Falta ${fmt(bal)}` : `Sobran ${fmt(-bal)}`}
-                    </p>
-                  );
-                })()}
-
-                {/* Transfer info */}
-                {detailEditPayments.find(p => p.method === "TRANSFERENCIA") && (() => {
-                  const cfg = orgConfig?.paymentMethods?.transfer;
-                  if (!cfg?.alias && !cfg?.bank) return null;
-                  return (
-                    <div className="bg-blue-50 rounded-lg px-3 py-2 text-xs text-blue-700 space-y-0.5">
-                      {cfg.bank && <p>🏦 <span className="font-medium">{cfg.bank}</span></p>}
-                      {cfg.alias && <p>Alias: <span className="font-semibold font-mono">{cfg.alias}</span></p>}
-                      {cfg.holder && <p>Titular: {cfg.holder}</p>}
-                    </div>
-                  );
-                })()}
-                {detailEditPayments.find(p => p.method === "ONLINE") && orgConfig?.paymentMethods?.mercadopago?.link && (
-                  <a href={orgConfig.paymentMethods.mercadopago.link} target="_blank" rel="noopener noreferrer"
-                    className="flex items-center gap-1.5 text-xs text-blue-600 hover:underline">
-                    🔵 Abrir link de cobro MP →
-                  </a>
-                )}
+                {/* Payment status — clickable checkbox */}
+                <button
+                  onClick={() => {
+                    if (detailOrder.isPaid) {
+                      unpayOrder(detailOrder.id);
+                    } else {
+                      setDetailId(null); setCobrandoId(detailOrder.id); setCobrarPayments([]); setCobrarIsCobrado(true);
+                    }
+                  }}
+                  disabled={unpayingId === detailOrder.id}
+                  className={`flex items-center gap-2 text-xs font-semibold rounded-lg px-2.5 py-1.5 border-2 transition-colors disabled:opacity-40 ${detailOrder.isPaid ? "border-emerald-300 bg-emerald-50 text-emerald-700 hover:bg-emerald-100" : "border-amber-300 bg-amber-50 text-amber-700 hover:bg-amber-100"}`}
+                >
+                  <span className={`w-4 h-4 rounded border-2 flex items-center justify-center shrink-0 ${detailOrder.isPaid ? "bg-emerald-500 border-emerald-500" : "border-amber-400"}`}>
+                    {detailOrder.isPaid && <svg className="w-3 h-3 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={3}><path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7"/></svg>}
+                  </span>
+                  {unpayingId === detailOrder.id ? "Revirtiendo..." : detailOrder.isPaid ? "Cobrado" : "Pendiente de cobro"}
+                </button>
               </div>
             </div>
 
@@ -1488,14 +1531,6 @@ export default function ComandasPage() {
                     className={`flex-1 py-2 rounded-xl text-sm font-semibold transition-colors disabled:opacity-40 ${STATUS_NEXT_BTN[detailOrder.orderStatus]}`}
                   >
                     {movingId === detailOrder.id ? "..." : STATUS_NEXT_LABEL[detailOrder.orderStatus]}
-                  </button>
-                )}
-                {!detailOrder.isPaid && (
-                  <button
-                    onClick={() => { setDetailId(null); setCobrandoId(detailOrder.id); setCobrarPayments([]); }}
-                    className="flex-1 py-2 rounded-xl text-sm font-semibold bg-gray-100 text-gray-700 hover:bg-gray-200 transition-colors"
-                  >
-                    Cobrar
                   </button>
                 )}
                 <button
@@ -1531,15 +1566,30 @@ export default function ComandasPage() {
                 </div>
               </button>
             )}
+            {cancellingOrder.isPaid && (
+              <button
+                onClick={() => setCancelRollbackPayments(!cancelRollbackPayments)}
+                className={`w-full flex items-center justify-between gap-3 p-3 rounded-xl border-2 transition-all ${cancelRollbackPayments ? "border-rose-400 bg-rose-50" : "border-gray-200 bg-gray-50"}`}
+              >
+                <span className="text-sm font-medium text-gray-700">Devolver cobro</span>
+                <div className={`w-10 h-6 rounded-full transition-colors flex items-center px-0.5 ${cancelRollbackPayments ? "bg-rose-500" : "bg-gray-300"}`}>
+                  <div className={`w-5 h-5 rounded-full bg-white shadow transition-transform ${cancelRollbackPayments ? "translate-x-4" : "translate-x-0"}`} />
+                </div>
+              </button>
+            )}
+
+            {cancelError && (
+              <p className="text-xs text-rose-600 bg-rose-50 rounded-lg px-3 py-2">{cancelError}</p>
+            )}
 
             <div className="flex gap-2">
-              <button onClick={() => setCancellingId(null)} className="flex-1 py-2.5 border border-gray-200 text-gray-700 rounded-xl font-medium text-sm hover:bg-gray-50 transition-colors">
+              <button onClick={() => { setCancellingId(null); setCancelError(null); setCancellingStatus("idle"); setCancelRollbackPayments(true); }} className="flex-1 py-2.5 border border-gray-200 text-gray-700 rounded-xl font-medium text-sm hover:bg-gray-50 transition-colors">
                 Volver
               </button>
               <button onClick={confirmCancel} disabled={cancellingStatus === "loading"}
                 className="flex-1 py-2.5 bg-rose-600 text-white rounded-xl font-bold text-sm hover:bg-rose-700 disabled:opacity-50 transition-colors"
               >
-                {cancellingStatus === "loading" ? "Cancelando..." : "Cancelar pedido"}
+                {cancellingStatus === "loading" ? "Cancelando..." : cancellingStatus === "error" ? "Reintentar" : "Cancelar pedido"}
               </button>
             </div>
           </div>

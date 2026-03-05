@@ -20,6 +20,9 @@ export async function POST(req: NextRequest, { params }: Params) {  let orgId: s
 
     const body = PaySaleSchema.parse(await req.json());
 
+    const saleUpdateData: Record<string, unknown> = { isPaid: body.isPaid };
+    if (body.total !== undefined) saleUpdateData.total = body.total;
+
     await prisma.$transaction([
       prisma.salePayment.createMany({
         data: body.payments.map((p) => ({
@@ -30,7 +33,7 @@ export async function POST(req: NextRequest, { params }: Params) {  let orgId: s
       }),
       prisma.sale.update({
         where: { id: params.id, organizationId: orgId },
-        data: { isPaid: true },
+        data: saleUpdateData,
       }),
     ]);
 
@@ -41,5 +44,20 @@ export async function POST(req: NextRequest, { params }: Params) {  let orgId: s
     }
     console.error(e);
     return NextResponse.json({ error: "Error interno", code: "INTERNAL_ERROR" }, { status: 500 });
+  }
+}
+
+export async function DELETE(req: NextRequest, { params }: Params) {
+  let orgId: string;
+  try { orgId = requireOrg(req); } catch (e) { return e as Response; }
+
+  try {
+    await prisma.$transaction([
+      prisma.salePayment.deleteMany({ where: { saleId: params.id } }),
+      prisma.sale.update({ where: { id: params.id, organizationId: orgId }, data: { isPaid: false } }),
+    ]);
+    return NextResponse.json({ ok: true });
+  } catch {
+    return NextResponse.json({ error: "Error interno" }, { status: 500 });
   }
 }

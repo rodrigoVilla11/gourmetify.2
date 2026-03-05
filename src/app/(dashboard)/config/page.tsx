@@ -1,5 +1,5 @@
 "use client";
-import { useState, useEffect, FormEvent } from "react";
+import { useState, useEffect, useRef } from "react";
 import { PLAN_LABELS, PLAN_COLORS, type Plan } from "@/lib/plans";
 
 // ── Types ──────────────────────────────────────────────────────────────────────
@@ -121,6 +121,177 @@ function ColorPicker({
         className="h-9 w-9 rounded-lg border border-gray-200 shrink-0"
         style={{ backgroundColor: hex }}
       />
+    </div>
+  );
+}
+
+// ── Cloudinary crop helper ─────────────────────────────────────────────────────
+
+function buildCloudinaryUrl(url: string, transform: string): string {
+  return url.replace("/image/upload/", `/image/upload/${transform}/`);
+}
+
+function ImageUploadCrop({
+  value, onChange, folder, aspect, label, previewClass,
+}: {
+  value: string; onChange: (url: string) => void;
+  folder: string; aspect: number; label: string; previewClass?: string;
+}) {
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const dragRef = useRef<{ startX: number; startY: number; startOx: number; startOy: number } | null>(null);
+  const [uploading, setUploading] = useState(false);
+  const [cropUrl, setCropUrl] = useState<string | null>(null);
+  const [zoom, setZoom] = useState(1);
+  const [offset, setOffset] = useState({ x: 0, y: 0 });
+  const [imgNatural, setImgNatural] = useState({ w: 0, h: 0 });
+
+  const PREVIEW_W = 400;
+  const PREVIEW_H = Math.round(PREVIEW_W / aspect);
+
+  const baseScale = imgNatural.w > 0
+    ? Math.max(PREVIEW_W / imgNatural.w, PREVIEW_H / imgNatural.h)
+    : 1;
+
+  function clampOff(ox: number, oy: number, z: number) {
+    const dw = imgNatural.w * baseScale * z;
+    const dh = imgNatural.h * baseScale * z;
+    return {
+      x: Math.max(Math.min(PREVIEW_W - dw, 0), Math.min(0, ox)),
+      y: Math.max(Math.min(PREVIEW_H - dh, 0), Math.min(0, oy)),
+    };
+  }
+
+  const displayW = imgNatural.w * baseScale * zoom;
+  const displayH = imgNatural.h * baseScale * zoom;
+
+  async function handleFileChange(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setUploading(true);
+    try {
+      const fd = new FormData();
+      fd.append("file", file);
+      const res = await fetch(`/api/upload?folder=${folder}`, { method: "POST", body: fd });
+      if (!res.ok) return;
+      const { url } = await res.json();
+      setCropUrl(url);
+      setZoom(1);
+      setOffset({ x: 0, y: 0 });
+      setImgNatural({ w: 0, h: 0 });
+    } finally {
+      setUploading(false);
+      e.target.value = "";
+    }
+  }
+
+  function applyCrop() {
+    if (!cropUrl) return;
+    const scale = baseScale * zoom;
+    const cropX = Math.max(0, Math.round(-offset.x / scale));
+    const cropY = Math.max(0, Math.round(-offset.y / scale));
+    const cropW = Math.round(PREVIEW_W / scale);
+    const cropH = Math.round(PREVIEW_H / scale);
+    const transform = `c_crop,x_${cropX},y_${cropY},w_${cropW},h_${cropH}`;
+    onChange(buildCloudinaryUrl(cropUrl, transform));
+    setCropUrl(null);
+  }
+
+  return (
+    <div>
+      <div className="flex items-center gap-3 flex-wrap">
+        {value && (
+          <img src={value} alt={label} className={previewClass}
+            onError={(e) => { (e.target as HTMLImageElement).style.display = "none"; }} />
+        )}
+        <button type="button" onClick={() => fileInputRef.current?.click()} disabled={uploading}
+          className="px-3 py-1.5 text-sm border border-gray-300 rounded-lg hover:bg-gray-50 text-gray-700 disabled:opacity-50">
+          {uploading ? "Subiendo..." : value ? "Cambiar imagen" : "Subir imagen"}
+        </button>
+        {value && (
+          <button type="button" onClick={() => onChange("")}
+            className="text-xs text-gray-400 hover:text-rose-500 transition-colors">
+            Quitar
+          </button>
+        )}
+        <input ref={fileInputRef} type="file" accept="image/*" className="hidden" onChange={handleFileChange} />
+      </div>
+
+      {cropUrl && (
+        <div className="fixed inset-0 z-50 bg-black/60 flex items-center justify-center p-4">
+          <div className="bg-white rounded-2xl p-6 shadow-xl" style={{ width: Math.min(PREVIEW_W + 48, window.innerWidth - 32) }}>
+            <h3 className="text-base font-semibold text-gray-900 mb-1">Ajustar imagen</h3>
+            <p className="text-xs text-gray-500 mb-4">Arrastrá para mover · Usá el zoom para acercar</p>
+
+            <div
+              className="relative overflow-hidden rounded-xl border border-gray-200 cursor-grab active:cursor-grabbing select-none"
+              style={{ width: PREVIEW_W, height: PREVIEW_H }}
+              onMouseDown={(e) => {
+                e.preventDefault();
+                dragRef.current = { startX: e.clientX, startY: e.clientY, startOx: offset.x, startOy: offset.y };
+              }}
+              onMouseMove={(e) => {
+                if (!dragRef.current) return;
+                const dx = e.clientX - dragRef.current.startX;
+                const dy = e.clientY - dragRef.current.startY;
+                setOffset(clampOff(dragRef.current.startOx + dx, dragRef.current.startOy + dy, zoom));
+              }}
+              onMouseUp={() => { dragRef.current = null; }}
+              onMouseLeave={() => { dragRef.current = null; }}
+            >
+              {imgNatural.w === 0 && (
+                <div className="absolute inset-0 flex items-center justify-center text-gray-400 text-sm">
+                  Cargando...
+                </div>
+              )}
+              <img
+                src={cropUrl} alt=""
+                onLoad={(e) => {
+                  const img = e.target as HTMLImageElement;
+                  const nat = { w: img.naturalWidth, h: img.naturalHeight };
+                  setImgNatural(nat);
+                  setOffset({ x: 0, y: 0 });
+                }}
+                style={{
+                  position: "absolute",
+                  left: offset.x,
+                  top: offset.y,
+                  width: displayW || "auto",
+                  height: displayH || "auto",
+                  pointerEvents: "none",
+                  userSelect: "none",
+                }}
+                draggable={false}
+              />
+            </div>
+
+            <div className="flex items-center gap-3 mt-4">
+              <span className="text-xs text-gray-500 shrink-0">Zoom</span>
+              <input
+                type="range" min={1} max={3} step={0.05} value={zoom}
+                onChange={(e) => {
+                  const z = parseFloat(e.target.value);
+                  setZoom(z);
+                  setOffset((prev) => clampOff(prev.x, prev.y, z));
+                }}
+                className="flex-1"
+              />
+              <span className="text-xs text-gray-500 w-10 text-right shrink-0">{zoom.toFixed(1)}×</span>
+            </div>
+
+            <div className="flex gap-3 mt-5 justify-end">
+              <button type="button" onClick={() => setCropUrl(null)}
+                className="px-4 py-2 text-sm border border-gray-300 rounded-lg text-gray-700 hover:bg-gray-50">
+                Cancelar
+              </button>
+              <button type="button" onClick={applyCrop}
+                className="px-4 py-2 text-sm rounded-lg text-white font-medium"
+                style={{ backgroundColor: "#0f2f26" }}>
+                Usar esta área
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -673,34 +844,27 @@ export default function ConfigPage() {
           <div className="border-t border-gray-100 pt-5">
             <h2 className="text-sm font-semibold text-gray-800 mb-1">Logo</h2>
             <p className="text-xs text-gray-500 mb-3">Imagen de logo del local (cuadrada recomendada)</p>
-            <input value={logoUrl} onChange={(e) => setLogoUrl(e.target.value)}
-              className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500"
-              placeholder="https://..." />
-            <p className="text-xs text-gray-400 mt-1">Pegá la URL de la imagen (Cloudinary, imgur, etc.)</p>
-            {logoUrl && (
-              <div className="mt-3 flex items-center gap-3">
-                <img src={logoUrl} alt="Logo"
-                  className="w-16 h-16 rounded-xl object-contain border border-gray-200 bg-gray-50 p-1"
-                  onError={(e) => { (e.target as HTMLImageElement).style.display = "none"; }} />
-                <p className="text-xs text-gray-500">Vista previa del logo</p>
-              </div>
-            )}
+            <ImageUploadCrop
+              value={logoUrl}
+              onChange={setLogoUrl}
+              folder="logos"
+              aspect={1}
+              label="Logo"
+              previewClass="w-16 h-16 rounded-xl object-contain border border-gray-200 bg-gray-50 p-1"
+            />
           </div>
 
           <div className="border-t border-gray-100 pt-5">
             <h2 className="text-sm font-semibold text-gray-800 mb-1">Imagen de portada</h2>
             <p className="text-xs text-gray-500 mb-3">Se muestra como banner principal de tu local</p>
-            <input value={coverImageUrl} onChange={(e) => setCoverImageUrl(e.target.value)}
-              className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500"
-              placeholder="https://..." />
-            <p className="text-xs text-gray-400 mt-1">Pegá la URL de la imagen (Cloudinary, imgur, etc.)</p>
-            {coverImageUrl && (
-              <div className="mt-3 rounded-xl overflow-hidden border border-gray-200 bg-gray-50">
-                <img src={coverImageUrl} alt="Portada"
-                  className="w-full h-44 object-cover"
-                  onError={(e) => { (e.target as HTMLImageElement).style.display = "none"; }} />
-              </div>
-            )}
+            <ImageUploadCrop
+              value={coverImageUrl}
+              onChange={setCoverImageUrl}
+              folder="portadas"
+              aspect={16 / 9}
+              label="Portada"
+              previewClass="w-full h-44 rounded-xl object-cover border border-gray-200"
+            />
           </div>
 
           <div className="flex justify-end pt-2">

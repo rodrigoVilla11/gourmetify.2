@@ -126,7 +126,7 @@ export async function POST(req: NextRequest) {
   try {
     const body = await req.json();
     const { date, notes, customerId, customerName, orderType, deliveryAddress, repartidorId, items, comboItems, payments } = CreateSaleSchema.parse(body);
-    const isPaid = !!(payments && payments.length > 0);
+    const isPaid = typeof body.isPaid === "boolean" ? body.isPaid : !!(payments && payments.length > 0 && payments.some((p: { amount: number }) => p.amount > 0));
 
     // ── Step 1: Load products to compute total ─────────────────────────────────
     const productIds = items.map((i) => i.productId);

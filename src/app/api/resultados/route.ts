@@ -15,12 +15,15 @@ export async function GET(req: NextRequest) {  let orgId: string;
 
     const dateRange = { gte: start, lte: end };
 
-    const [salesAgg, incomeRows, expenseRows, paymentsAgg, timeLogs, employees, salePayments, saleItems] =
+    const [salesAgg, incomeRows, expenseRows, supplierPaymentRows, timeLogs, employees, salePayments, saleItems] =
       await Promise.all([
         prisma.sale.aggregate({ _sum: { total: true }, where: { organizationId: orgId, date: dateRange } }),
         prisma.incomeEntry.findMany({ where: { organizationId: orgId, date: dateRange } }),
         prisma.expense.findMany({ include: { category: true }, where: { organizationId: orgId, date: dateRange } }),
-        prisma.supplierPayment.aggregate({ _sum: { amount: true }, where: { organizationId: orgId, date: dateRange } }),
+        prisma.supplierPayment.findMany({
+          where: { organizationId: orgId, date: dateRange },
+          include: { supplier: { select: { name: true } } },
+        }),
         prisma.timeLog.findMany({
           where: { organizationId: orgId, checkIn: dateRange, checkOut: { not: null } },
           select: { employeeId: true, duration: true },
@@ -59,7 +62,15 @@ export async function GET(req: NextRequest) {  let orgId: string;
       .sort((a, b) => b.amount - a.amount);
 
     // ── Costos — proveedores ──────────────────────────────────────────────────
-    const totalSupplierPayments = Number(paymentsAgg._sum.amount ?? 0);
+    const totalSupplierPayments = supplierPaymentRows.reduce((sum, r) => sum + Number(r.amount), 0);
+    const supplierMap = new Map<string, number>();
+    for (const p of supplierPaymentRows) {
+      const name = p.supplier.name;
+      supplierMap.set(name, (supplierMap.get(name) ?? 0) + Number(p.amount));
+    }
+    const supplierPayments = Array.from(supplierMap.entries())
+      .map(([supplier, amount]) => ({ supplier, amount }))
+      .sort((a, b) => b.amount - a.amount);
 
     // ── Costos — sueldos ──────────────────────────────────────────────────────
     const employeeMap = new Map(employees.map((e) => [e.id, e]));
@@ -105,7 +116,7 @@ export async function GET(req: NextRequest) {  let orgId: string;
       ingresos: { totalSales, totalOtherIncome, total: totalIngresos },
       costos: { totalExpenses, totalSupplierPayments, totalSalaries, cogs, total: totalCostos },
       resultado,
-      breakdowns: { paymentMethods, expenseCategories, salaries },
+      breakdowns: { paymentMethods, expenseCategories, salaries, supplierPayments },
     });
   } catch (e) {
     console.error(e);

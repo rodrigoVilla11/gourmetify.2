@@ -89,7 +89,7 @@ export const SaleItemSchema = z.object({
 
 export const SalePaymentSchema = z.object({
   paymentMethod: PaymentMethodSchema,
-  amount: z.coerce.number().positive("Monto debe ser positivo"),
+  amount: z.coerce.number().min(0, "Monto no puede ser negativo"),
 });
 
 export const SaleComboItemSchema = z.object({
@@ -127,17 +127,28 @@ export const CreateSaleSchema = z.object({
 export const PaySaleSchema = z.object({
   payments: z.array(z.object({
     paymentMethod: PaymentMethodSchema,
-    amount:        z.coerce.number().positive(),
+    amount:        z.coerce.number().min(0),
   })).min(1, "Al menos un método de pago requerido"),
+  total:  z.coerce.number().positive().optional(),
+  isPaid: z.boolean().default(true),
 });
 
 // ── Adjustments ──────────────────────────────────────────────────────────────
 
-export const CreateAdjustmentSchema = z.object({
-  ingredientId: z.string().cuid("ID de ingrediente inválido"),
-  delta: z.coerce.number().refine((v) => v !== 0, "Delta no puede ser cero"),
-  reason: z.string().optional().nullable(),
-});
+export const CreateAdjustmentSchema = z.discriminatedUnion("type", [
+  z.object({
+    type: z.literal("ingredient"),
+    ingredientId: z.string().cuid("ID de ingrediente inválido"),
+    delta: z.coerce.number().refine((v) => v !== 0, "Delta no puede ser cero"),
+    reason: z.string().optional().nullable(),
+  }),
+  z.object({
+    type: z.literal("preparation"),
+    preparationId: z.string().cuid("ID de preparación inválido"),
+    delta: z.coerce.number().refine((v) => v !== 0, "Delta no puede ser cero"),
+    reason: z.string().optional().nullable(),
+  }),
+]);
 
 // ── Employees ────────────────────────────────────────────────────────────────
 
@@ -309,7 +320,8 @@ export const OrderStatusSchema = z.enum(["NUEVO", "EN_PREPARACION", "LISTO", "EN
 
 export const UpdateSaleStatusSchema = z.object({
   status: OrderStatusSchema,
-  rollbackStock: z.boolean().optional(),
+  rollbackStock:    z.boolean().optional(),
+  rollbackPayments: z.boolean().optional(),
 });
 
 // ── Users / Auth ───────────────────────────────────────────────────────────────

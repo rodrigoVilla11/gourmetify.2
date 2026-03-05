@@ -22,7 +22,7 @@ export async function POST(req: NextRequest, { params }: Params) {  let orgId: s
 
   try {
     const body = await req.json();
-    const { status, rollbackStock } = UpdateSaleStatusSchema.parse(body);
+    const { status, rollbackStock, rollbackPayments } = UpdateSaleStatusSchema.parse(body);
 
     const sale = await prisma.sale.findUnique({
       where: { id: params.id, organizationId: orgId },
@@ -45,9 +45,10 @@ export async function POST(req: NextRequest, { params }: Params) {  let orgId: s
     }
 
     const updateData: Record<string, unknown> = { orderStatus: status };
-    if (status === "EN_PREPARACION") updateData.startedAt = new Date();
-    if (status === "LISTO")          updateData.readyAt   = new Date();
+    if (status === "EN_PREPARACION") updateData.startedAt   = new Date();
+    if (status === "LISTO")          updateData.readyAt     = new Date();
     if (status === "ENTREGADO")      updateData.deliveredAt = new Date();
+    if (status === "CANCELADO" && rollbackPayments) updateData.isPaid = false;
 
     const items   = sale.items.map((i) => ({ productId: i.productId, quantity: Number(i.quantity) }));
     const combos  = sale.combos.map((c) => ({ comboId: c.comboId, quantity: Number(c.quantity) }));
@@ -62,7 +63,10 @@ export async function POST(req: NextRequest, { params }: Params) {  let orgId: s
       }
 
       if (status === "CANCELADO" && (sale.orderStatus === "EN_PREPARACION" || sale.orderStatus === "LISTO") && rollbackStock) {
-        await rollbackSaleStock(tx, params.id, items, combos);
+        await rollbackSaleStock(tx, params.id, items, combos, orgId);
+      }
+      if (status === "CANCELADO" && rollbackPayments) {
+        await tx.salePayment.deleteMany({ where: { saleId: params.id } });
       }
     });
 
