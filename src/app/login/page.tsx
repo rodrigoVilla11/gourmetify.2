@@ -34,7 +34,9 @@ function LoginForm() {
 
       const { role } = await res.json();
 
-      if (role === "EMPLEADO") {
+      if (role === "SUPERADMIN") {
+        router.push("/admin/organizations");
+      } else if (role === "EMPLEADO") {
         router.push("/fichador");
       } else if (role === "CAJERA") {
         router.push("/comandas");

@@ -15,7 +15,8 @@
       "Bash(npx prisma db execute --file ./prisma/migrations/add_plans.sql)",
       "Bash(npx prisma generate)",
       "Bash(npx prisma db execute --file prisma/migrations/add_org_config.sql)",
-      "Bash(npx prisma db execute --file prisma/migrations/fix_repartidores_columns.sql)"
+      "Bash(npx prisma db execute --file prisma/migrations/fix_repartidores_columns.sql)",
+      "Bash(mkdir:*)"
     ]
   }
 }

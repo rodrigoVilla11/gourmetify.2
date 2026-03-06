@@ -3,7 +3,7 @@ import { prisma } from "@/lib/prisma";
 import { SetupForm } from "./SetupForm";
 
 export default async function SetupPage() {
-  const count = await prisma.user.count();
+  const count = await prisma.user.count({ where: { role: "SUPERADMIN" } });
   if (count > 0) redirect("/login");
 
   return (
@@ -13,7 +13,7 @@ export default async function SetupPage() {
           <div className="text-center space-y-1">
             <div className="text-4xl">🍽️</div>
             <h1 className="text-2xl font-bold text-gray-900">Configuración inicial</h1>
-            <p className="text-sm text-gray-500">Creá la cuenta de administrador para comenzar</p>
+            <p className="text-sm text-gray-500">Creá la cuenta superadmin del sistema</p>
           </div>
           <SetupForm />
         </div>

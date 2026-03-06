@@ -27,24 +27,12 @@ export async function POST(req: NextRequest, { params }: Params) {  let orgId: s
       return NextResponse.json({ error: "Preparación no encontrada", code: "NOT_FOUND" }, { status: 404 });
     }
 
-    // When the preparation has output-side wastage (e.g. salmon trimming), the ingredient
-    // quantities are consumed at face value and the YIELD is reduced by the wastage %.
-    // When wastagePct == 0 the classic input-inflation logic applies (backward-compatible).
-    const hasOutputWastage = Number(preparation.wastagePct) > 0;
-
     // Build deduction map for raw ingredients
     const deductionMap = new Map<string, { delta: number; name: string; unit: Unit; onHand: number }>();
 
     for (const bomItem of preparation.ingredients) {
-      let totalInBomUnit: number;
-      if (hasOutputWastage) {
-        // No BOM wastage inflation — ingredient consumed at stated quantity
-        totalInBomUnit = Number(bomItem.qty) * batches;
-      } else {
-        // Classic behavior: wastagePct inflates ingredient consumption
-        const wastageMultiplier = 1 + Number(bomItem.wastagePct) / 100;
-        totalInBomUnit = Number(bomItem.qty) * wastageMultiplier * batches;
-      }
+      const wastageMultiplier = 1 + Number(bomItem.wastagePct) / 100;
+      const totalInBomUnit = Number(bomItem.qty) * wastageMultiplier * batches;
 
       const ingredientBaseUnit = bomItem.ingredient.unit as Unit;
       const bomUnit = bomItem.unit as Unit;
@@ -78,13 +66,8 @@ export async function POST(req: NextRequest, { params }: Params) {  let orgId: s
     const subPrepDeductionMap = new Map<string, { delta: number; name: string; unit: Unit }>();
 
     for (const bomItem of preparation.subPreparations) {
-      let totalInBomUnit: number;
-      if (hasOutputWastage) {
-        totalInBomUnit = Number(bomItem.qty) * batches;
-      } else {
-        const wastageMultiplier = 1 + Number(bomItem.wastagePct) / 100;
-        totalInBomUnit = Number(bomItem.qty) * wastageMultiplier * batches;
-      }
+      const wastageMultiplier = 1 + Number(bomItem.wastagePct) / 100;
+      const totalInBomUnit = Number(bomItem.qty) * wastageMultiplier * batches;
 
       const subPrepBaseUnit = bomItem.subPrep.unit as Unit;
       const bomUnit = bomItem.unit as Unit;
@@ -113,10 +96,7 @@ export async function POST(req: NextRequest, { params }: Params) {  let orgId: s
       }
     }
 
-    // Yield: with output wastage → batches × (1 - wastagePct/100); otherwise classic
-    const yieldTotal = hasOutputWastage
-      ? batches * (1 - Number(preparation.wastagePct) / 100)
-      : Number(preparation.yieldQty) * batches;
+    const yieldTotal = Number(preparation.yieldQty) * (1 - Number(preparation.wastagePct) / 100) * batches;
 
     const reason = `Producción de ${preparation.name} (${batches} ${batches === 1 ? "tanda" : "tandas"})`;
 

@@ -15,7 +15,8 @@ function tryConvert(qty: number, from: string, to: string): number {
 async function computeCostPrice(
   ingredients: { ingredientId: string; qty: number; unit: string; wastagePct: number }[],
   subPreparations: { subPrepId: string; qty: number; unit: string; wastagePct: number }[],
-  yieldQty: number
+  yieldQty: number,
+  wastagePct: number = 0
 ): Promise<number> {
   const [ingRecords, subPrepRecords] = await Promise.all([
     ingredients.length > 0
@@ -45,7 +46,8 @@ async function computeCostPrice(
     totalBatchCost += Number(prep.costPrice) * qtyInBase;
   }
 
-  return yieldQty > 0 ? totalBatchCost / yieldQty : 0;
+  const effectiveYield = yieldQty * (1 - wastagePct / 100);
+  return effectiveYield > 0 ? totalBatchCost / effectiveYield : 0;
 }
 
 export async function GET(req: NextRequest, { params }: Params) {
@@ -99,7 +101,8 @@ export async function PUT(req: NextRequest, { params }: Params) {  let orgId: st
         subPrepId: s.subPrepId, qty: Number(s.qty), unit: s.unit, wastagePct: Number(s.wastagePct),
       })) ?? []);
       const finalYieldQty = prepData.yieldQty ?? Number(current?.yieldQty ?? 1);
-      costPrice = await computeCostPrice(finalIngredients, finalSubPreps, finalYieldQty);
+      const finalWastagePct = prepData.wastagePct ?? Number(current?.wastagePct ?? 0);
+      costPrice = await computeCostPrice(finalIngredients, finalSubPreps, finalYieldQty, finalWastagePct);
     }
 
     const preparation = await prisma.$transaction(async (tx) => {

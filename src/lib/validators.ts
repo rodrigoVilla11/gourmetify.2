@@ -314,6 +314,47 @@ export const CreateComboSchema = z.object({
 
 export const UpdateComboSchema = CreateComboSchema.partial();
 
+// ── Purchase Orders ───────────────────────────────────────────────────────────
+
+export const PurchaseOrderStatusSchema = z.enum(["DRAFT", "SENT", "RECEIVED", "CANCELLED"]);
+
+export const PurchaseOrderItemInputSchema = z.object({
+  ingredientId: z.string().cuid("ID de ingrediente inválido"),
+  ingredientNameSnapshot: z.string().min(1),
+  unit: UnitSchema,
+  expectedQty: z.coerce.number().positive("Cantidad debe ser positiva"),
+  expectedUnitCost: z.coerce.number().min(0),
+  notes: z.string().optional().nullable(),
+});
+
+export const CreatePurchaseOrderSchema = z.object({
+  supplierId: z.string().cuid("Proveedor requerido"),
+  items: z.array(PurchaseOrderItemInputSchema).min(1, "Agregá al menos un ingrediente"),
+  notes: z.string().optional().nullable(),
+  expectedDeliveryAt: z.string().optional().nullable(),
+});
+
+export const UpdatePurchaseOrderSchema = CreatePurchaseOrderSchema.partial();
+
+export const UpdatePurchaseOrderStatusSchema = z.object({
+  status: z.enum(["SENT", "CANCELLED"]),
+});
+
+export const ReceivePurchaseOrderSchema = z.object({
+  items: z.array(z.object({
+    id: z.string().cuid(),
+    receivedQty: z.coerce.number().min(0),
+    actualUnitCost: z.coerce.number().min(0),
+  })).min(1),
+  notes: z.string().optional().nullable(),
+});
+
+export const AddPurchaseOrderInvoiceSchema = z.object({
+  fileUrl: z.string().url("URL inválida"),
+  fileName: z.string().min(1),
+  fileType: z.string().optional().nullable(),
+});
+
 // ── Order Status ──────────────────────────────────────────────────────────────
 
 export const OrderStatusSchema = z.enum(["NUEVO", "EN_PREPARACION", "LISTO", "ENTREGADO", "CANCELADO"]);

@@ -68,6 +68,8 @@ model Organization {
   preparations         Preparation[]
   preparationMovements PreparationMovement[]
   combos               Combo[]
+  purchaseOrders       PurchaseOrder[]
+  ingredientCostHistory IngredientCostHistory[]
 
   @@map("organizations")
 }
@@ -86,10 +88,12 @@ model Supplier {
   createdAt      DateTime @default(now())
   updatedAt      DateTime @updatedAt
 
-  organization     Organization    @relation(fields: [organizationId], references: [id])
-  ingredients      Ingredient[]
-  invoices         SupplierInvoice[]
-  supplierPayments SupplierPayment[]
+  organization          Organization            @relation(fields: [organizationId], references: [id])
+  ingredients           Ingredient[]
+  invoices              SupplierInvoice[]
+  supplierPayments      SupplierPayment[]
+  purchaseOrders        PurchaseOrder[]
+  ingredientCostHistory IngredientCostHistory[]
 
   @@index([organizationId])
   @@map("suppliers")
@@ -114,6 +118,8 @@ model Ingredient {
   productIngredients     ProductIngredient[]
   stockMovements         StockMovement[]
   preparationIngredients PreparationIngredient[]
+  purchaseOrderItems     PurchaseOrderItem[]
+  costHistory            IngredientCostHistory[]
 
   @@index([organizationId, isActive])
   @@index([supplierId])
@@ -614,6 +620,94 @@ model SaleCombo {
 
   @@index([saleId])
   @@map("sale_combos")
+}
+
+// ── Purchase Orders ───────────────────────────────────────────────────────────
+
+model PurchaseOrder {
+  id                  String    @id @default(cuid())
+  organizationId      String    @map("organization_id")
+  supplierId          String    @map("supplier_id")
+  number              String
+  status              String    @default("DRAFT")
+  expectedTotal       Decimal   @default(0)  @map("expected_total")
+  actualTotal         Decimal?              @map("actual_total")
+  notes               String?
+  sentAt              DateTime?             @map("sent_at")
+  receivedAt          DateTime?             @map("received_at")
+  isPartial           Boolean   @default(false) @map("is_partial")
+  expectedDeliveryAt  DateTime?             @map("expected_delivery_at")
+  createdAt           DateTime  @default(now()) @map("created_at")
+  updatedAt           DateTime  @updatedAt      @map("updated_at")
+
+  organization  Organization            @relation(fields: [organizationId], references: [id])
+  supplier      Supplier                @relation(fields: [supplierId], references: [id])
+  items         PurchaseOrderItem[]
+  invoices      PurchaseOrderInvoice[]
+  costHistory   IngredientCostHistory[]
+
+  @@unique([organizationId, number])
+  @@index([organizationId, status])
+  @@index([supplierId])
+  @@map("purchase_orders")
+}
+
+model PurchaseOrderItem {
+  id                      String   @id @default(cuid())
+  purchaseOrderId         String   @map("purchase_order_id")
+  ingredientId            String   @map("ingredient_id")
+  ingredientNameSnapshot  String   @map("ingredient_name_snapshot")
+  unit                    String
+  expectedQty             Decimal  @map("expected_qty")
+  receivedQty             Decimal? @map("received_qty")
+  expectedUnitCost        Decimal  @map("expected_unit_cost")
+  actualUnitCost          Decimal? @map("actual_unit_cost")
+  expectedSubtotal        Decimal  @map("expected_subtotal")
+  actualSubtotal          Decimal? @map("actual_subtotal")
+  notes                   String?
+
+  purchaseOrder PurchaseOrder @relation(fields: [purchaseOrderId], references: [id], onDelete: Cascade)
+  ingredient    Ingredient    @relation(fields: [ingredientId], references: [id])
+
+  @@index([purchaseOrderId])
+  @@index([ingredientId])
+  @@map("purchase_order_items")
+}
+
+model PurchaseOrderInvoice {
+  id              String   @id @default(cuid())
+  purchaseOrderId String   @map("purchase_order_id")
+  fileUrl         String   @map("file_url")
+  fileType        String?  @map("file_type")
+  fileName        String   @map("file_name")
+  uploadedAt      DateTime @default(now()) @map("uploaded_at")
+
+  purchaseOrder PurchaseOrder @relation(fields: [purchaseOrderId], references: [id], onDelete: Cascade)
+
+  @@index([purchaseOrderId])
+  @@map("purchase_order_invoices")
+}
+
+model IngredientCostHistory {
+  id              String   @id @default(cuid())
+  organizationId  String   @map("organization_id")
+  ingredientId    String   @map("ingredient_id")
+  supplierId      String?  @map("supplier_id")
+  purchaseOrderId String?  @map("purchase_order_id")
+  previousCost    Decimal  @map("previous_cost")
+  newCost         Decimal  @map("new_cost")
+  quantity        Decimal?
+  effectiveDate   DateTime @default(now()) @map("effective_date")
+  createdAt       DateTime @default(now()) @map("created_at")
+
+  organization  Organization   @relation(fields: [organizationId], references: [id])
+  ingredient    Ingredient     @relation(fields: [ingredientId], references: [id])
+  supplier      Supplier?      @relation(fields: [supplierId], references: [id])
+  purchaseOrder PurchaseOrder? @relation(fields: [purchaseOrderId], references: [id], onDelete: SetNull)
+
+  @@index([ingredientId, effectiveDate])
+  @@index([organizationId])
+  @@map("ingredient_cost_history")
 }
 
 // ── Users / Auth ───────────────────────────────────────────────────────────────
