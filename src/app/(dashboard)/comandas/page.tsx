@@ -219,7 +219,7 @@ export default function ComandasPage() {
 
       // Detect new NUEVO orders → browser notification
       const currentNuevoIds = new Set(orders.filter(o => o.orderStatus === "NUEVO").map(o => o.id));
-      const newArrivals = [...currentNuevoIds].filter(id => !prevNuevoIds.current.has(id));
+      const newArrivals = Array.from(currentNuevoIds).filter(id => !prevNuevoIds.current.has(id));
       if (newArrivals.length > 0 && prevNuevoIds.current.size > 0) {
         const count = newArrivals.length;
         if (typeof Notification !== "undefined" && Notification.permission === "granted") {
@@ -691,7 +691,7 @@ export default function ComandasPage() {
             {warnings.length > 0 && <p className="text-xs text-amber-600 mt-1">Stock bajo: {warnings.join(", ")}</p>}
           </div>
           <div className="flex flex-col gap-2 w-full">
-            <button onClick={resetOrder} className="w-full py-2.5 bg-emerald-600 text-white rounded-xl font-semibold text-sm hover:bg-emerald-700 transition-colors">
+            <button onClick={resetOrder} className="w-full py-2.5 text-white rounded-xl font-semibold text-sm transition-colors hover:opacity-90" style={{ background: "#0f2f26" }}>
               Nueva comanda
             </button>
             {saleId && (
@@ -1109,16 +1109,18 @@ export default function ComandasPage() {
       {/* ── Left: product grid / kanban ─────────────────────────────────── */}
       <div className="flex flex-col min-h-0 bg-gray-50 flex-1">
         {/* Header */}
-        <div className="bg-white border-b border-gray-200 px-4 py-3 shrink-0 space-y-2">
+        <div className="bg-white border-b border-gray-200 px-4 py-3 shrink-0 space-y-2" style={{ borderTop: "2px solid #0f2f26" }}>
           <div className="flex items-center justify-between gap-2">
             <div className="flex gap-1 p-0.5 bg-gray-100 rounded-lg">
               <button onClick={() => setPageTab("nueva")}
-                className={`px-3 py-1.5 rounded-md text-xs font-semibold transition-colors ${pageTab === "nueva" ? "bg-white shadow-sm text-gray-900" : "text-gray-500 hover:text-gray-700"}`}
+                className="px-3 py-1.5 rounded-md text-xs font-semibold transition-colors"
+                style={pageTab === "nueva" ? { background: "#0f2f26", color: "#fff" } : { color: "#6b7280" }}
               >
                 Nueva
               </button>
               <button onClick={() => setPageTab("activos")}
-                className={`px-3 py-1.5 rounded-md text-xs font-semibold transition-colors flex items-center gap-1 ${pageTab === "activos" ? "bg-white shadow-sm text-gray-900" : "text-gray-500 hover:text-gray-700"}`}
+                className="px-3 py-1.5 rounded-md text-xs font-semibold transition-colors flex items-center gap-1"
+                style={pageTab === "activos" ? { background: "#0f2f26", color: "#fff" } : { color: "#6b7280" }}
               >
                 Activos
                 {kanbanOrders.length > 0 && (
@@ -1131,7 +1133,8 @@ export default function ComandasPage() {
 
             {pageTab === "nueva" && (
               <button onClick={() => setShowOrder(true)}
-                className="lg:hidden relative px-3 py-1.5 bg-emerald-600 text-white text-sm font-semibold rounded-lg"
+                className="lg:hidden relative px-3 py-1.5 text-white text-sm font-semibold rounded-lg"
+                style={{ background: "#0f2f26" }}
               >
                 Pedido
                 {orderCount > 0 && (
@@ -1149,17 +1152,23 @@ export default function ComandasPage() {
                 className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500 bg-white"
               />
               <div className="flex flex-wrap gap-1">
-                <button onClick={() => setTab("all")} className={`px-3 py-1 rounded-full text-xs font-medium transition-colors ${tab === "all" ? "bg-emerald-600 text-white" : "bg-gray-100 text-gray-600 hover:bg-gray-200"}`}>Todo</button>
+                <button onClick={() => setTab("all")}
+                className="px-3 py-1 rounded-full text-xs font-semibold transition-colors"
+                style={tab === "all" ? { background: "#0f2f26", color: "#fff" } : { background: "#f3f4f6", color: "#4b5563" }}
+              >Todo</button>
                 {categories.map((cat) => (
                   <button key={cat.id} onClick={() => setTab(tab === cat.id ? "all" : cat.id)}
-                    className={`px-3 py-1 rounded-full text-xs font-medium transition-colors ${tab === cat.id ? "text-white" : "bg-gray-100 text-gray-600 hover:bg-gray-200"}`}
-                    style={tab === cat.id ? { backgroundColor: cat.color } : {}}
+                    className="px-3 py-1 rounded-full text-xs font-semibold transition-colors"
+                    style={tab === cat.id ? { backgroundColor: cat.color, color: "#fff" } : { background: "#f3f4f6", color: "#4b5563" }}
                   >
                     {cat.name}
                   </button>
                 ))}
                 {combos.length > 0 && (
-                  <button onClick={() => setTab("combos")} className={`px-3 py-1 rounded-full text-xs font-medium transition-colors ${tab === "combos" ? "bg-violet-600 text-white" : "bg-gray-100 text-gray-600 hover:bg-gray-200"}`}>Combos</button>
+                  <button onClick={() => setTab("combos")}
+                    className="px-3 py-1 rounded-full text-xs font-semibold transition-colors"
+                    style={tab === "combos" ? { background: "#7c3aed", color: "#fff" } : { background: "#f3f4f6", color: "#4b5563" }}
+                  >Combos</button>
                 )}
               </div>
             </>
@@ -1178,13 +1187,14 @@ export default function ComandasPage() {
                   const inOrder = order.find((o) => o.id === prod.id && o.type === "product");
                   return (
                     <button key={prod.id} onClick={() => addOrIncrement({ id: prod.id, type: "product", name: prod.name, price: prod.salePrice })}
-                      className={`relative text-left p-3 rounded-xl border-2 transition-all ${inOrder ? "border-emerald-400 bg-emerald-50" : "border-gray-100 bg-white hover:border-emerald-200 hover:bg-emerald-50/40"}`}
+                      className="relative text-left p-3 rounded-xl border-2 transition-all"
+                      style={inOrder ? { borderColor: "#0f2f26", background: "#f0f7f4" } : { borderColor: "#f3f4f6", background: "#fff" }}
                     >
                       {inOrder && (
                         <span className="absolute top-1.5 right-1.5 min-w-[20px] h-5 flex items-center justify-center rounded-full bg-emerald-600 text-white text-[10px] font-bold px-1">{inOrder.quantity}</span>
                       )}
                       <p className="text-sm font-semibold text-gray-800 leading-tight line-clamp-2 pr-5">{prod.name}</p>
-                      <p className="text-xs text-emerald-600 font-bold mt-1">{fmt(prod.salePrice)}</p>
+                      <p className="text-xs font-bold mt-1" style={{ color: "#0f2f26" }}>{fmt(prod.salePrice)}</p>
                     </button>
                   );
                 })}
@@ -1192,7 +1202,8 @@ export default function ComandasPage() {
                   const inOrder = order.find((o) => o.id === combo.id && o.type === "combo");
                   return (
                     <button key={combo.id} onClick={() => addOrIncrement({ id: combo.id, type: "combo", name: combo.name, price: combo.salePrice })}
-                      className={`relative text-left p-3 rounded-xl border-2 transition-all ${inOrder ? "border-violet-400 bg-violet-50" : "border-gray-100 bg-white hover:border-violet-200 hover:bg-violet-50/40"}`}
+                      className="relative text-left p-3 rounded-xl border-2 transition-all"
+                      style={inOrder ? { borderColor: "#7c3aed", background: "#f5f3ff" } : { borderColor: "#f3f4f6", background: "#fff" }}
                     >
                       {inOrder && (
                         <span className="absolute top-1.5 right-1.5 min-w-[20px] h-5 flex items-center justify-center rounded-full bg-violet-600 text-white text-[10px] font-bold px-1">{inOrder.quantity}</span>
@@ -1211,7 +1222,7 @@ export default function ComandasPage() {
                   <p className="text-xs text-gray-500">{orderCount} ítem{orderCount !== 1 ? "s" : ""}</p>
                   <p className="text-base font-bold text-gray-900">{fmt(total)}</p>
                 </div>
-                <button onClick={() => setShowOrder(true)} className="px-5 py-2.5 bg-emerald-600 text-white font-semibold rounded-xl text-sm hover:bg-emerald-700 transition-colors">
+                <button onClick={() => setShowOrder(true)} className="px-5 py-2.5 text-white font-semibold rounded-xl text-sm transition-colors hover:opacity-90" style={{ background: "#0f2f26" }}>
                   Ver pedido →
                 </button>
               </div>
@@ -1519,7 +1530,8 @@ export default function ComandasPage() {
               <button
                 onClick={saveDetailEdits}
                 disabled={detailSaving || detailEditItems.length === 0}
-                className="w-full py-2.5 bg-emerald-600 text-white rounded-xl text-sm font-semibold hover:bg-emerald-700 disabled:opacity-40 transition-colors"
+                className="w-full py-2.5 text-white rounded-xl text-sm font-semibold disabled:opacity-40 transition-colors hover:opacity-90"
+                style={{ background: "#0f2f26" }}
               >
                 {detailSaving ? "Guardando..." : "Guardar cambios"}
               </button>

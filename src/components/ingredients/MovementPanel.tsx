@@ -149,8 +149,8 @@ export function MovementPanel({
                 interval={1}
               />
               <Tooltip
-                formatter={(v: number) => [
-                  `${v >= 0 ? "+" : ""}${v.toFixed(3)}`,
+                formatter={(v: number | undefined) => [
+                  v == null ? "—" : `${v >= 0 ? "+" : ""}${v.toFixed(3)}`,
                   "Delta",
                 ]}
                 contentStyle={{ fontSize: 11, padding: "4px 8px" }}

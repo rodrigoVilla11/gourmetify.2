@@ -228,7 +228,7 @@ export default function DashboardPage() {
               <p className="text-xs mt-0.5">Stock suficiente en todos los ingredientes</p>
             </div>
           ) : (
-            <div className="divide-y divide-gray-50">
+            <div className="divide-y divide-gray-50 overflow-y-auto max-h-72">
               {data.lowStockIngredients.map((ing) => {
                 const onHand = parseFloat(ing.onHand);
                 const minQty = parseFloat(ing.minQty);

@@ -14,7 +14,7 @@ export function buildExcel(headers: string[], rows: Row[], sheetName = "Datos"):
 
 /** Server-side: create a Response with the Excel buffer */
 export function excelResponse(buf: Buffer, filename: string): Response {
-  return new Response(buf, {
+  return new Response(buf as unknown as BodyInit, {
     headers: {
       "Content-Type": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
       "Content-Disposition": `attachment; filename="${filename}"`,

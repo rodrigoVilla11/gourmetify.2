@@ -30,7 +30,7 @@ export async function PUT(req: NextRequest, { params }: { params: { id: string }
 }
 
 export async function DELETE(_req: NextRequest, { params }: { params: { id: string } }) {  let orgId: string;
-  try { orgId = requireOrg(req); } catch (e) { return e as Response; }
+  try { orgId = requireOrg(_req); } catch (e) { return e as Response; }
 
   try {
     await prisma.productCategory.delete({ where: { id: params.id } });

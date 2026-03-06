@@ -313,7 +313,7 @@ export default function PublicMenuPage() {
           {cart.map((item) => (
             <div key={item.productId} className="flex justify-between text-sm py-1 border-b border-gray-50 last:border-0">
               <span className="text-gray-600">{item.name} <span className="text-gray-400">× {item.quantity}</span></span>
-              <span className="font-semibold text-gray-900">{formatCurrency(item.price * item.quantity, item.currency)}</span>
+              <span className="font-semibold text-gray-900">{formatCurrency(item.price * item.quantity, item.currency as import("@/types").Currency)}</span>
             </div>
           ))}
           {deliveryFee > 0 && (
@@ -419,7 +419,7 @@ export default function PublicMenuPage() {
                         )}
                         <div className="mt-3 flex items-center justify-between gap-2">
                           <span className="font-bold text-lg" style={{ color: primary }}>
-                            {formatCurrency(product.salePrice, product.currency)}
+                            {formatCurrency(product.salePrice, product.currency as import("@/types").Currency)}
                           </span>
                           {inCart ? (
                             <div className="flex items-center bg-gray-100 rounded-full p-1 gap-3">
@@ -506,14 +506,14 @@ export default function PublicMenuPage() {
                 <div key={item.productId} className="flex items-center gap-3 py-3 border-b border-gray-50 last:border-0">
                   <div className="flex-1 min-w-0">
                     <p className="text-sm font-semibold text-gray-900 truncate">{item.name}</p>
-                    <p className="text-xs text-gray-400">{formatCurrency(item.price, item.currency)} c/u</p>
+                    <p className="text-xs text-gray-400">{formatCurrency(item.price, item.currency as import("@/types").Currency)} c/u</p>
                   </div>
                   <div className="flex items-center bg-gray-100 rounded-full p-1 gap-2 shrink-0">
                     <button onClick={() => updateQty(item.productId, -1)} className="w-7 h-7 rounded-full flex items-center justify-center text-gray-700 font-bold hover:bg-gray-200 transition-colors">−</button>
                     <span className="text-sm font-bold w-4 text-center">{item.quantity}</span>
                     <button onClick={() => updateQty(item.productId, 1)} className="w-7 h-7 rounded-full flex items-center justify-center text-white font-bold" style={{ backgroundColor: primary }}>+</button>
                   </div>
-                  <span className="text-sm font-bold text-gray-900 w-16 text-right shrink-0">{formatCurrency(item.price * item.quantity, item.currency)}</span>
+                  <span className="text-sm font-bold text-gray-900 w-16 text-right shrink-0">{formatCurrency(item.price * item.quantity, item.currency as import("@/types").Currency)}</span>
                 </div>
               ))}
             </div>
@@ -717,7 +717,7 @@ export default function PublicMenuPage() {
                           <p className="text-sm font-semibold text-gray-900 truncate">{item.name}</p>
                           <p className="text-xs text-gray-400">× {item.quantity}</p>
                         </div>
-                        <span className="text-sm font-semibold text-gray-900 shrink-0">{formatCurrency(item.price * item.quantity, item.currency)}</span>
+                        <span className="text-sm font-semibold text-gray-900 shrink-0">{formatCurrency(item.price * item.quantity, item.currency as import("@/types").Currency)}</span>
                       </div>
                     ))}
                     {deliveryFee > 0 && (

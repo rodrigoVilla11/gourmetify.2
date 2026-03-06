@@ -26,7 +26,7 @@ export async function GET(req: NextRequest) {  let orgId: string;
       id: session.id,
       openedAt: session.openedAt,
       closedAt: session.closedAt,
-      openingBalance: session.openingBalance,
+      openingBalance: Number(session.openingBalance),
     }, orgId);
 
     return NextResponse.json(summary);
