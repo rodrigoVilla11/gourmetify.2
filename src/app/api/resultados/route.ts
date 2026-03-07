@@ -16,9 +16,8 @@ export async function GET(req: NextRequest) {  let orgId: string;
 
     const dateRange = { gte: start, lte: end };
 
-    const [salesAgg, incomeRows, expenseRows, supplierPaymentRows, timeLogs, employees, salePayments, saleItems] =
+    const [incomeRows, expenseRows, supplierPaymentRows, timeLogs, employees, salePayments, saleItems, extrasDiscountsAgg] =
       await Promise.all([
-        prisma.sale.aggregate({ _sum: { total: true }, where: { organizationId: orgId, date: dateRange } }),
         prisma.incomeEntry.findMany({ where: { organizationId: orgId, date: dateRange } }),
         prisma.expense.findMany({ include: { category: true }, where: { organizationId: orgId, date: dateRange } }),
         prisma.supplierPayment.findMany({
@@ -36,16 +35,22 @@ export async function GET(req: NextRequest) {  let orgId: string;
         prisma.salePayment.groupBy({
           by: ["paymentMethod"],
           _sum: { amount: true },
-          where: { sale: { organizationId: orgId, date: dateRange } },
+          where: { sale: { organizationId: orgId, orderStatus: "ENTREGADO", date: dateRange } },
         }),
         prisma.saleItem.findMany({
-          where: { sale: { organizationId: orgId, date: dateRange, orderStatus: { not: "CANCELADO" } } },
+          where: { sale: { organizationId: orgId, orderStatus: "ENTREGADO", date: dateRange } },
           select: { quantity: true, product: { select: { costPrice: true } } },
+        }),
+        prisma.sale.aggregate({
+          _sum: { extrasAmount: true, discountAmount: true },
+          where: { organizationId: orgId, orderStatus: "ENTREGADO", date: dateRange },
         }),
       ]);
 
     // ── Ingresos ──────────────────────────────────────────────────────────────
-    const totalSales = Number(salesAgg._sum.total ?? 0);
+    // Use SalePayment sum as ground truth (handles pre-fix records where sale.total
+    // was not updated when discount was applied at cobrar time)
+    const totalSales = salePayments.reduce((s, r) => s + Number(r._sum.amount ?? 0), 0);
     const totalOtherIncome = incomeRows.reduce((sum, r) => sum + Number(r.amount), 0);
     const totalIngresos = totalSales + totalOtherIncome;
 
@@ -113,11 +118,16 @@ export async function GET(req: NextRequest) {  let orgId: string;
       .map((p) => ({ method: p.paymentMethod, amount: Number(p._sum.amount ?? 0) }))
       .sort((a, b) => b.amount - a.amount);
 
+    const totalExtrasRevenue   = Number(extrasDiscountsAgg._sum.extrasAmount   ?? 0);
+    const totalDiscountsGiven  = Number(extrasDiscountsAgg._sum.discountAmount ?? 0);
+
     return NextResponse.json({
       ingresos: { totalSales, totalOtherIncome, total: totalIngresos },
       costos: { totalExpenses, totalSupplierPayments, totalSalaries, cogs, total: totalCostos },
       resultado,
       breakdowns: { paymentMethods, expenseCategories, salaries, supplierPayments },
+      extras: { totalExtrasRevenue },
+      discounts: { totalDiscountsGiven },
     });
   } catch (e) {
     console.error(e);

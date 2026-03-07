@@ -21,15 +21,34 @@ export async function POST(req: NextRequest, { params }: Params) {  let orgId: s
 
     const body = PaySaleSchema.parse(await req.json());
 
+    // Fetch current sale total to apply adjustment on top
+    const currentSale = await prisma.sale.findUnique({ where: { id: params.id, organizationId: orgId }, select: { total: true } });
+    const baseTotal = currentSale ? Number(currentSale.total) : undefined;
+
     const saleUpdateData: Record<string, unknown> = { isPaid: body.isPaid };
-    if (body.total !== undefined) saleUpdateData.total = body.total;
+    // Apply explicit total override OR compute from base + adjustment
+    if (body.total !== undefined) {
+      saleUpdateData.total = body.total;
+    } else if (baseTotal !== undefined && body.paymentAdjustmentAmount !== undefined) {
+      saleUpdateData.total = baseTotal + body.paymentAdjustmentAmount;
+    }
+    if (body.paymentAdjustmentType && body.paymentAdjustmentType !== "none") {
+      saleUpdateData.paymentAdjustmentType   = body.paymentAdjustmentType;
+      saleUpdateData.paymentAdjustmentPct    = body.paymentAdjustmentPct ?? null;
+      saleUpdateData.paymentAdjustmentAmount = body.paymentAdjustmentAmount ?? null;
+      saleUpdateData.paymentMethodSnapshot   = body.paymentMethodSnapshot ?? null;
+    }
+    if (body.discountAmount !== undefined) saleUpdateData.discountAmount = body.discountAmount;
+    if (body.discountsSnapshot !== undefined) saleUpdateData.discountsSnapshot = body.discountsSnapshot;
 
     await prisma.$transaction([
+      prisma.salePayment.deleteMany({ where: { saleId: params.id } }),
       prisma.salePayment.createMany({
         data: body.payments.map((p) => ({
           saleId: params.id,
           paymentMethod: p.paymentMethod,
           amount: p.amount,
+          confirmedAt: new Date(),
         })),
       }),
       prisma.sale.update({

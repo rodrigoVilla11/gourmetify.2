@@ -75,7 +75,7 @@ function getDashboardData(orgId: string) {
 
         prisma.sale.aggregate({
           _sum: { total: true },
-          where: { date: { gte: today }, orderStatus: { not: "CANCELADO" }, organizationId: orgId },
+          where: { date: { gte: today }, isPaid: true, organizationId: orgId },
         }),
       ]);
 

@@ -19,7 +19,7 @@ export async function GET(req: NextRequest) {  let orgId: string;
     const end = toParam ? new Date(toParam + "T23:59:59.999Z") : endOfDay(today);
 
     const sales = await prisma.sale.findMany({
-      where: { organizationId: orgId, date: { gte: start, lte: end } },
+      where: { organizationId: orgId, orderStatus: "ENTREGADO", date: { gte: start, lte: end } },
       select: {
         date: true,
         total: true,
@@ -41,18 +41,26 @@ export async function GET(req: NextRequest) {  let orgId: string;
       orderBy: { date: "asc" },
     });
 
+    // Use payment sum as ground truth (handles pre-fix records where sale.total
+    // was not updated when discount was applied at cobrar time)
+    function saleRevenue(s: { total: string | number; payments: { amount: string | number }[] }): number {
+      const sum = s.payments.reduce((acc, p) => acc + Number(p.amount), 0);
+      return sum > 0 ? sum : Number(s.total);
+    }
+
     // ── Summary ───────────────────────────────────────────────────────────────
     const totalCount = sales.length;
-    const totalRevenue = sales.reduce((sum, s) => sum + Number(s.total), 0);
+    const totalRevenue = sales.reduce((sum, s) => sum + saleRevenue(s), 0);
     const avgTicket = totalCount > 0 ? totalRevenue / totalCount : 0;
 
     // ── By day ────────────────────────────────────────────────────────────────
     const dayMap = new Map<string, { total: number; count: number }>();
     for (const s of sales) {
       const key = format(new Date(s.date), "yyyy-MM-dd");
+      const rev = saleRevenue(s);
       const ex = dayMap.get(key);
-      if (ex) { ex.total += Number(s.total); ex.count++; }
-      else dayMap.set(key, { total: Number(s.total), count: 1 });
+      if (ex) { ex.total += rev; ex.count++; }
+      else dayMap.set(key, { total: rev, count: 1 });
     }
     const byDay = Array.from(dayMap.entries()).map(([date, v]) => ({ date, ...v }));
 
@@ -62,7 +70,7 @@ export async function GET(req: NextRequest) {  let orgId: string;
     for (const s of sales) {
       const h = getHours(new Date(s.date));
       const ex = hourMap.get(h)!;
-      ex.total += Number(s.total);
+      ex.total += saleRevenue(s);
       ex.count++;
     }
     const byHour = Array.from(hourMap.entries())
@@ -75,7 +83,7 @@ export async function GET(req: NextRequest) {  let orgId: string;
     for (const s of sales) {
       const d = getDay(new Date(s.date)); // 0=Sun
       const ex = dowMap.get(d)!;
-      ex.total += Number(s.total);
+      ex.total += saleRevenue(s);
       ex.count++;
     }
     // Reorder Mon(1)..Sun(0)

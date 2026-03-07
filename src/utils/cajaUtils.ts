@@ -37,7 +37,7 @@ export async function buildCajaDiariaSummary(session: {
 
   const [salePayments, expenses] = await Promise.all([
     prisma.salePayment.findMany({
-      where: { sale: { organizationId: orgId, date: dateFilter } },
+      where: { sale: { organizationId: orgId, date: dateFilter, isPaid: true } },
       select: { paymentMethod: true, amount: true },
     }),
     prisma.expense.findMany({
@@ -108,7 +108,7 @@ export async function buildCajaSummary(from: Date, to: Date, openingBalance?: nu
   const [salePayments, incomeEntries, allExpenses, saleTotals, supplierPayments, openSessions] =
     await Promise.all([
       prisma.salePayment.findMany({
-        where: { sale: { ...(orgId ? { organizationId: orgId } : {}), date: dateFilter } },
+        where: { sale: { ...(orgId ? { organizationId: orgId } : {}), date: dateFilter, orderStatus: "ENTREGADO" } },
         select: { paymentMethod: true, amount: true },
       }),
       prisma.incomeEntry.findMany({
@@ -125,7 +125,7 @@ export async function buildCajaSummary(from: Date, to: Date, openingBalance?: nu
         },
       }),
       prisma.sale.aggregate({
-        where: { ...(orgId ? { organizationId: orgId } : {}), date: dateFilter },
+        where: { ...(orgId ? { organizationId: orgId } : {}), date: dateFilter, orderStatus: "ENTREGADO" },
         _sum: { total: true },
       }),
       prisma.supplierPayment.findMany({

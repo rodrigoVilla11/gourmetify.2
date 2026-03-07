@@ -1,5 +1,5 @@
 "use client";
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, useCallback } from "react";
 import { PLAN_LABELS, PLAN_COLORS, type Plan } from "@/lib/plans";
 
 // ── Types ──────────────────────────────────────────────────────────────────────
@@ -48,7 +48,22 @@ interface OrgProfile {
   colorPrimary: string | null; colorSecondary: string | null; colorAccent: string | null;
   coverImageUrl: string | null;
   deliveryFee: number | null;
+  addressLat: number | null;
+  addressLng: number | null;
 }
+
+interface DeliveryZone {
+  id: string;
+  name: string;
+  price: number | string;
+  zoneType: string;
+  radiusKm: number | null;
+  polygon: { lat: number; lng: number }[] | null;
+  color: string;
+  sortOrder: number;
+}
+
+const ZONE_COLORS = ["#3B82F6", "#EF4444", "#10B981", "#F59E0B", "#8B5CF6", "#EC4899"];
 
 // ── Defaults ───────────────────────────────────────────────────────────────────
 
@@ -359,7 +374,7 @@ function PaymentCard({ title, icon, cfg, onChange, badge, extra }: PaymentCardPr
 
 // ── Main page ─────────────────────────────────────────────────────────────────
 
-type Tab = "info" | "payments" | "schedule" | "appearance";
+type Tab = "info" | "payments" | "schedule" | "appearance" | "zonas";
 
 export default function ConfigPage() {
   const [profile, setProfile] = useState<OrgProfile | null>(null);
@@ -396,6 +411,32 @@ export default function ConfigPage() {
   const [colorAccent, setColorAccent] = useState("#34d399");
   const [coverImageUrl, setCoverImageUrl] = useState("");
 
+  // Tab: Zonas
+  const [zones, setZones] = useState<DeliveryZone[]>([]);
+  const [zonesLoading, setZonesLoading] = useState(false);
+  const [showAddZone, setShowAddZone] = useState(false);
+  const [newZone, setNewZone] = useState({ name: "", price: "", zoneType: "radius" as "radius" | "polygon", radiusKm: "", color: "#3B82F6" });
+  const [savingZone, setSavingZone] = useState(false);
+  const [addressLat, setAddressLat] = useState<number | null>(null);
+  const [addressLng, setAddressLng] = useState<number | null>(null);
+  const [mapReady, setMapReady] = useState(false);
+  const mapRef = useRef<HTMLDivElement>(null);
+  const googleMapRef = useRef<google.maps.Map | null>(null);
+  const drawingManagerRef = useRef<google.maps.drawing.DrawingManager | null>(null);
+  const [drawingPolygon, setDrawingPolygon] = useState<{ lat: number; lng: number }[] | null>(null);
+  const [isDrawingMode, setIsDrawingMode] = useState(false);
+  const mapRenderersRef = useRef<(google.maps.Circle | google.maps.Polygon)[]>([]);
+  // Google Maps loading (only for Zonas map widget)
+  const [googleMapsLoaded, setGoogleMapsLoaded] = useState(false);
+  // Address autocomplete (server-side proxy)
+  const addressInputRef = useRef<HTMLInputElement>(null);
+  const [addrSuggestions, setAddrSuggestions] = useState<{ description: string; placeId: string }[]>([]);
+  const [showAddrSuggestions, setShowAddrSuggestions] = useState(false);
+  const addrSuggestTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // Zone editing
+  const [editingZoneId, setEditingZoneId] = useState<string | null>(null);
+  const [editZoneData, setEditZoneData] = useState({ name: "", price: "", radiusKm: "", color: "#3B82F6" });
+
   useEffect(() => {
     fetch("/api/organizations/me")
       .then((r) => r.json())
@@ -418,9 +459,145 @@ export default function ConfigPage() {
         setColorAccent(data.colorAccent ?? "#34d399");
         setCoverImageUrl(data.coverImageUrl ?? "");
         setDeliveryFee(data.deliveryFee != null ? String(data.deliveryFee) : "0");
+        setAddressLat(data.addressLat ?? null);
+        setAddressLng(data.addressLng ?? null);
       })
       .finally(() => setLoading(false));
   }, []);
+
+  // Load Google Maps script once on mount
+  useEffect(() => {
+    const MAPS_KEY = process.env.NEXT_PUBLIC_GOOGLE_MAPS_API_KEY;
+    if (!MAPS_KEY) return;
+    if (typeof window !== "undefined" && window.google?.maps) { setGoogleMapsLoaded(true); return; }
+    const existing = document.querySelector('script[data-gm-maps]');
+    if (existing) {
+      existing.addEventListener("load", () => setGoogleMapsLoaded(true));
+      return;
+    }
+    const s = document.createElement("script");
+    s.setAttribute("data-gm-maps", "1");
+    s.src = `https://maps.googleapis.com/maps/api/js?key=${MAPS_KEY}&libraries=places,drawing`;
+    s.onload = () => setGoogleMapsLoaded(true);
+    document.head.appendChild(s);
+  }, []);
+
+  // Load zones
+  const loadZones = useCallback(() => {
+    setZonesLoading(true);
+    fetch("/api/delivery-zones")
+      .then((r) => r.json())
+      .then((d) => setZones(Array.isArray(d) ? d : []))
+      .finally(() => setZonesLoading(false));
+  }, []);
+
+  // Re-render zone overlays on map when zones or map changes
+  const renderZonesOnMap = useCallback((map: google.maps.Map, orgLat: number, orgLng: number, zoneList: DeliveryZone[]) => {
+    mapRenderersRef.current.forEach((r) => r.setMap(null));
+    mapRenderersRef.current = [];
+    for (const zone of zoneList) {
+      if (zone.zoneType === "radius" && zone.radiusKm) {
+        const circle = new google.maps.Circle({
+          map,
+          center: { lat: orgLat, lng: orgLng },
+          radius: zone.radiusKm * 1000,
+          strokeColor: zone.color,
+          strokeOpacity: 0.8,
+          strokeWeight: 2,
+          fillColor: zone.color,
+          fillOpacity: 0.15,
+        });
+        mapRenderersRef.current.push(circle);
+      } else if (zone.zoneType === "polygon" && Array.isArray(zone.polygon)) {
+        const poly = new google.maps.Polygon({
+          map,
+          paths: zone.polygon,
+          strokeColor: zone.color,
+          strokeOpacity: 0.8,
+          strokeWeight: 2,
+          fillColor: zone.color,
+          fillOpacity: 0.15,
+        });
+        mapRenderersRef.current.push(poly);
+      }
+    }
+  }, []);
+
+  // Init map when entering "zonas" tab and Maps is ready
+  useEffect(() => {
+    if (tab !== "zonas") return;
+    loadZones();
+    if (!googleMapsLoaded || !mapRef.current || googleMapRef.current) return;
+
+    const center = { lat: addressLat ?? -34.6037, lng: addressLng ?? -58.3816 };
+    const map = new google.maps.Map(mapRef.current, { zoom: 12, center, mapTypeControl: false });
+    googleMapRef.current = map;
+    new google.maps.Marker({ position: center, map, title: "Tu local" });
+    renderZonesOnMap(map, center.lat, center.lng, zones);
+
+    const dm = new google.maps.drawing.DrawingManager({
+      drawingControl: false,
+      polygonOptions: { strokeColor: newZone.color, fillColor: newZone.color, fillOpacity: 0.2, strokeWeight: 2 },
+    });
+    dm.setMap(map);
+    drawingManagerRef.current = dm;
+    dm.addListener("polygoncomplete", (poly: google.maps.Polygon) => {
+      const coords = poly.getPath().getArray().map((p: google.maps.LatLng) => ({ lat: p.lat(), lng: p.lng() }));
+      setDrawingPolygon(coords);
+      poly.setMap(null);
+      dm.setDrawingMode(null);
+      setIsDrawingMode(false);
+    });
+    setMapReady(true);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tab, googleMapsLoaded]);
+
+  // Server-side address autocomplete
+  const fetchAddrSuggestions = useCallback(async (input: string) => {
+    if (input.trim().length < 3) { setAddrSuggestions([]); setShowAddrSuggestions(false); return; }
+    try {
+      const res = await fetch(`/api/places-autocomplete?input=${encodeURIComponent(input)}`);
+      const data = await res.json();
+      setAddrSuggestions(data.predictions ?? []);
+      setShowAddrSuggestions((data.predictions ?? []).length > 0);
+    } catch {
+      setAddrSuggestions([]);
+    }
+  }, []);
+
+  const selectAddress = useCallback(async (description: string) => {
+    setAddress(description);
+    setAddrSuggestions([]);
+    setShowAddrSuggestions(false);
+    // Geocode to get lat/lng and save silently
+    try {
+      const res = await fetch("/api/geocode", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ address: description }),
+      });
+      if (!res.ok) return;
+      const { lat, lng } = await res.json();
+      setAddressLat(lat);
+      setAddressLng(lng);
+      fetch("/api/organizations/me", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ addressLat: lat, addressLng: lng }),
+      });
+      if (googleMapRef.current) {
+        googleMapRef.current.setCenter({ lat, lng });
+        renderZonesOnMap(googleMapRef.current, lat, lng, zones);
+      }
+    } catch { /* silent */ }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [zones, renderZonesOnMap]);
+
+  // Re-render zones when zone list changes and map exists
+  useEffect(() => {
+    if (!googleMapRef.current || !addressLat || !addressLng) return;
+    renderZonesOnMap(googleMapRef.current, addressLat, addressLng, zones);
+  }, [zones, addressLat, addressLng, renderZonesOnMap]);
 
   const handleSave = async () => {
     setError(null); setSaved(false); setSaving(true);
@@ -465,7 +642,69 @@ export default function ConfigPage() {
     { id: "payments",   label: "Pagos" },
     { id: "schedule",   label: "Horarios" },
     { id: "appearance", label: "Apariencia" },
+    { id: "zonas",      label: "Zonas delivery" },
   ];
+
+  async function saveEditZone() {
+    if (!editingZoneId) return;
+    setSavingZone(true);
+    const zone = zones.find((z) => z.id === editingZoneId);
+    const body: Record<string, unknown> = {
+      name: editZoneData.name,
+      price: parseFloat(editZoneData.price) || 0,
+      color: editZoneData.color,
+    };
+    if (zone?.zoneType === "radius") {
+      body.radiusKm = parseFloat(editZoneData.radiusKm) || null;
+    }
+    const res = await fetch(`/api/delivery-zones/${editingZoneId}`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    setSavingZone(false);
+    if (res.ok) { setEditingZoneId(null); loadZones(); }
+  }
+
+  async function createZone() {
+    setSavingZone(true);
+    try {
+      const body: Record<string, unknown> = {
+        name: newZone.name,
+        price: parseFloat(newZone.price) || 0,
+        zoneType: newZone.zoneType,
+        color: newZone.color,
+        sortOrder: zones.length,
+      };
+      if (newZone.zoneType === "radius") {
+        body.radiusKm = parseFloat(newZone.radiusKm) || null;
+      } else {
+        body.polygon = drawingPolygon;
+      }
+      const res = await fetch("/api/delivery-zones", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
+      if (res.ok) {
+        setNewZone({ name: "", price: "", zoneType: "radius", radiusKm: "", color: "#3B82F6" });
+        setDrawingPolygon(null);
+        setShowAddZone(false);
+        loadZones();
+      } else {
+        const err = await res.json();
+        alert(err.error ?? "Error al crear zona");
+      }
+    } finally {
+      setSavingZone(false);
+    }
+  }
+
+  async function deleteZone(id: string) {
+    if (!confirm("¿Eliminar esta zona?")) return;
+    await fetch(`/api/delivery-zones/${id}`, { method: "DELETE" });
+    loadZones();
+  }
 
   return (
     <div className="max-w-2xl mx-auto space-y-5">
@@ -605,9 +844,64 @@ export default function ConfigPage() {
 
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-1">Dirección</label>
-            <input value={address} onChange={(e) => setAddress(e.target.value)}
-              className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500"
-              placeholder="Av. Corrientes 1234, CABA" />
+            <div className="relative">
+              <input
+                ref={addressInputRef}
+                value={address}
+                onChange={(e) => {
+                  const val = e.target.value;
+                  setAddress(val);
+                  if (addrSuggestTimerRef.current) clearTimeout(addrSuggestTimerRef.current);
+                  addrSuggestTimerRef.current = setTimeout(() => fetchAddrSuggestions(val), 300);
+                }}
+                onBlur={() => {
+                  setTimeout(() => setShowAddrSuggestions(false), 150);
+                  // Geocode on blur if no suggestions were selected (lat/lng not yet set)
+                  if (address.trim() && !addressLat) {
+                    fetch("/api/geocode", {
+                      method: "POST",
+                      headers: { "Content-Type": "application/json" },
+                      body: JSON.stringify({ address: address.trim() }),
+                    }).then((r) => r.json()).then((data) => {
+                      if (data.lat && data.lng) {
+                        setAddressLat(data.lat);
+                        setAddressLng(data.lng);
+                        fetch("/api/organizations/me", {
+                          method: "PUT",
+                          headers: { "Content-Type": "application/json" },
+                          body: JSON.stringify({ addressLat: data.lat, addressLng: data.lng }),
+                        });
+                      }
+                    }).catch(() => {});
+                  }
+                }}
+                className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500"
+                placeholder="Av. Corrientes 1234, CABA"
+                autoComplete="off"
+              />
+              {showAddrSuggestions && addrSuggestions.length > 0 && (
+                <div className="absolute left-0 right-0 top-full mt-1 z-50 bg-white rounded-xl border border-gray-200 shadow-xl overflow-hidden">
+                  {addrSuggestions.map((s) => (
+                    <button
+                      key={s.placeId}
+                      type="button"
+                      onMouseDown={(e) => e.preventDefault()}
+                      onClick={() => selectAddress(s.description)}
+                      className="w-full text-left px-4 py-2.5 text-sm text-gray-800 hover:bg-gray-50 border-b border-gray-100 last:border-0 flex items-start gap-2"
+                    >
+                      <svg className="w-4 h-4 mt-0.5 shrink-0 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.8}>
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z" />
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M15 11a3 3 0 11-6 0 3 3 0 016 0z" />
+                      </svg>
+                      <span className="leading-snug">{s.description}</span>
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+            {addressLat && (
+              <p className="text-xs text-emerald-600 mt-1">Ubicacion guardada</p>
+            )}
           </div>
 
           <div>
@@ -819,6 +1113,265 @@ export default function ConfigPage() {
           </div>
         </div>
       )}
+
+      {/* ── TAB: Zonas delivery ── always in DOM to prevent Google Maps removeChild crash */}
+      <div className="space-y-4" style={{ display: tab === "zonas" ? undefined : "none" }}>
+          {/* Status bar */}
+          {!addressLat ? (
+            <div className="bg-amber-50 border border-amber-200 rounded-lg px-4 py-3 text-sm text-amber-700">
+              Configurá la dirección del local en la pestaña <strong>Información</strong> seleccionándola del autocompletado para que el mapa se centre correctamente.
+            </div>
+          ) : null}
+
+          {/* Map + zones list side by side */}
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+            {/* Map */}
+            <div className="bg-white border border-gray-200 rounded-xl shadow-sm overflow-hidden">
+              <div className="px-4 py-3 border-b border-gray-100">
+                <h3 className="text-sm font-semibold text-gray-800">Mapa</h3>
+              </div>
+              {!mapReady && (
+                <div className="flex items-center justify-center bg-gray-100 text-gray-400 text-sm" style={{ height: 380 }}>
+                  {process.env.NEXT_PUBLIC_GOOGLE_MAPS_API_KEY ? "Cargando mapa..." : "API key no configurada"}
+                </div>
+              )}
+              {/* mapRef must have no React children — Google Maps owns this node's DOM */}
+              <div ref={mapRef} style={{ height: mapReady ? 380 : 0 }} className="w-full" />
+            </div>
+
+            {/* Zones list */}
+            <div className="bg-white border border-gray-200 rounded-xl shadow-sm flex flex-col">
+              <div className="px-4 py-3 border-b border-gray-100 flex items-center justify-between">
+                <h3 className="text-sm font-semibold text-gray-800">Zonas de cobertura</h3>
+                <button
+                  type="button"
+                  onClick={() => setShowAddZone(!showAddZone)}
+                  className="px-3 py-1 text-xs rounded-lg text-white font-medium"
+                  style={{ backgroundColor: "#0f2f26" }}
+                >
+                  + Agregar zona
+                </button>
+              </div>
+
+              <div className="flex-1 overflow-y-auto divide-y divide-gray-100">
+                {zonesLoading ? (
+                  <p className="text-center text-gray-400 text-sm py-8">Cargando...</p>
+                ) : zones.length === 0 ? (
+                  <p className="text-center text-gray-400 text-sm py-8">Sin zonas configuradas</p>
+                ) : (
+                  zones.map((zone) => (
+                    <div key={zone.id}>
+                      {editingZoneId === zone.id ? (
+                        /* ── Inline edit form ── */
+                        <div className="px-4 py-3 space-y-2 bg-gray-50">
+                          <div className="grid grid-cols-2 gap-2">
+                            <div>
+                              <label className="block text-[10px] font-medium text-gray-500 mb-0.5">Nombre</label>
+                              <input
+                                value={editZoneData.name}
+                                onChange={(e) => setEditZoneData((d) => ({ ...d, name: e.target.value }))}
+                                className="w-full border border-gray-300 rounded-lg px-2 py-1.5 text-xs focus:outline-none focus:ring-2 focus:ring-emerald-500"
+                              />
+                            </div>
+                            <div>
+                              <label className="block text-[10px] font-medium text-gray-500 mb-0.5">Precio ($)</label>
+                              <input
+                                type="number" min={0}
+                                value={editZoneData.price}
+                                onChange={(e) => setEditZoneData((d) => ({ ...d, price: e.target.value }))}
+                                className="w-full border border-gray-300 rounded-lg px-2 py-1.5 text-xs focus:outline-none focus:ring-2 focus:ring-emerald-500"
+                              />
+                            </div>
+                          </div>
+                          {zone.zoneType === "radius" && (
+                            <div>
+                              <label className="block text-[10px] font-medium text-gray-500 mb-0.5">Radio (km)</label>
+                              <input
+                                type="number" min={0.1} step={0.1}
+                                value={editZoneData.radiusKm}
+                                onChange={(e) => setEditZoneData((d) => ({ ...d, radiusKm: e.target.value }))}
+                                className="w-full border border-gray-300 rounded-lg px-2 py-1.5 text-xs focus:outline-none focus:ring-2 focus:ring-emerald-500"
+                              />
+                            </div>
+                          )}
+                          <div className="flex gap-1.5">
+                            {ZONE_COLORS.map((c) => (
+                              <button key={c} type="button" onClick={() => setEditZoneData((d) => ({ ...d, color: c }))}
+                                className="w-5 h-5 rounded-full border-2 transition-all"
+                                style={{ backgroundColor: c, borderColor: editZoneData.color === c ? "#0f2f26" : "transparent", transform: editZoneData.color === c ? "scale(1.2)" : "scale(1)" }}
+                              />
+                            ))}
+                          </div>
+                          <div className="flex gap-2 pt-1">
+                            <button type="button" onClick={() => setEditingZoneId(null)}
+                              className="flex-1 py-1.5 text-xs border border-gray-200 rounded-lg text-gray-600 hover:bg-gray-100">
+                              Cancelar
+                            </button>
+                            <button type="button" onClick={saveEditZone} disabled={savingZone || !editZoneData.name}
+                              className="flex-1 py-1.5 text-xs rounded-lg text-white font-medium disabled:opacity-50"
+                              style={{ backgroundColor: "#0f2f26" }}>
+                              {savingZone ? "..." : "Guardar"}
+                            </button>
+                          </div>
+                        </div>
+                      ) : (
+                        /* ── Zone row ── */
+                        <div className="px-4 py-3 flex items-center gap-3">
+                          <span className="w-3 h-3 rounded-full shrink-0" style={{ backgroundColor: zone.color }} />
+                          <div className="flex-1 min-w-0">
+                            <p className="text-sm font-medium text-gray-800 truncate">{zone.name}</p>
+                            <p className="text-xs text-gray-500">
+                              {zone.zoneType === "radius" ? `Radio ${zone.radiusKm} km` : "Polígono"}
+                              {" · $"}{Number(zone.price).toLocaleString("es-AR")}
+                            </p>
+                          </div>
+                          <button type="button" title="Editar"
+                            onClick={() => {
+                              setEditingZoneId(zone.id);
+                              setEditZoneData({
+                                name: zone.name,
+                                price: String(Number(zone.price)),
+                                radiusKm: zone.radiusKm != null ? String(zone.radiusKm) : "",
+                                color: zone.color,
+                              });
+                            }}
+                            className="text-gray-300 hover:text-emerald-600 transition-colors">
+                            <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
+                            </svg>
+                          </button>
+                          <button type="button" title="Eliminar"
+                            onClick={() => deleteZone(zone.id)}
+                            className="text-gray-300 hover:text-rose-500 transition-colors">
+                            <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                            </svg>
+                          </button>
+                        </div>
+                      )}
+                    </div>
+                  ))
+                )}
+              </div>
+            </div>
+          </div>
+
+          {/* Add zone form */}
+          {showAddZone && (
+            <div className="bg-white border border-gray-200 rounded-xl p-5 shadow-sm space-y-4">
+              <h3 className="text-sm font-semibold text-gray-800">Nueva zona</h3>
+
+              {/* Type toggle */}
+              <div className="flex gap-1 p-0.5 bg-gray-100 rounded-lg w-fit">
+                {(["radius", "polygon"] as const).map((t) => (
+                  <button
+                    key={t}
+                    type="button"
+                    onClick={() => { setNewZone((z) => ({ ...z, zoneType: t })); setDrawingPolygon(null); }}
+                    className={`px-4 py-1.5 rounded-md text-xs font-medium transition-colors ${newZone.zoneType === t ? "bg-white shadow-sm text-emerald-700 font-semibold" : "text-gray-500"}`}
+                  >
+                    {t === "radius" ? "Por radio" : "Por polígono"}
+                  </button>
+                ))}
+              </div>
+
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-xs font-medium text-gray-600 mb-1">Nombre</label>
+                  <input
+                    value={newZone.name}
+                    onChange={(e) => setNewZone((z) => ({ ...z, name: e.target.value }))}
+                    placeholder="Zona Centro"
+                    className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-medium text-gray-600 mb-1">Precio de envío ($)</label>
+                  <input
+                    type="number" min={0}
+                    value={newZone.price}
+                    onChange={(e) => setNewZone((z) => ({ ...z, price: e.target.value }))}
+                    placeholder="500"
+                    className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500"
+                  />
+                </div>
+              </div>
+
+              {newZone.zoneType === "radius" && (
+                <div>
+                  <label className="block text-xs font-medium text-gray-600 mb-1">Radio (km)</label>
+                  <input
+                    type="number" min={0.1} step={0.1}
+                    value={newZone.radiusKm}
+                    onChange={(e) => setNewZone((z) => ({ ...z, radiusKm: e.target.value }))}
+                    placeholder="3"
+                    className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500"
+                  />
+                </div>
+              )}
+
+              {newZone.zoneType === "polygon" && (
+                <div>
+                  <label className="block text-xs font-medium text-gray-600 mb-1">Polígono</label>
+                  {drawingPolygon ? (
+                    <div className="flex items-center gap-2">
+                      <span className="text-xs text-emerald-600 font-medium">Polígono dibujado ({drawingPolygon.length} puntos)</span>
+                      <button type="button" onClick={() => setDrawingPolygon(null)} className="text-xs text-rose-500 hover:underline">Borrar</button>
+                    </div>
+                  ) : (
+                    <button
+                      type="button"
+                      disabled={!mapReady}
+                      onClick={() => {
+                        if (!drawingManagerRef.current) return;
+                        drawingManagerRef.current.setDrawingMode(google.maps.drawing.OverlayType.POLYGON);
+                        setIsDrawingMode(true);
+                      }}
+                      className="px-4 py-2 text-sm border border-dashed border-blue-400 text-blue-600 rounded-lg hover:bg-blue-50 disabled:opacity-40"
+                    >
+                      {isDrawingMode ? "Dibujando en el mapa..." : "Dibujar en el mapa"}
+                    </button>
+                  )}
+                </div>
+              )}
+
+              {/* Color */}
+              <div>
+                <label className="block text-xs font-medium text-gray-600 mb-2">Color</label>
+                <div className="flex gap-2">
+                  {ZONE_COLORS.map((c) => (
+                    <button
+                      key={c}
+                      type="button"
+                      onClick={() => setNewZone((z) => ({ ...z, color: c }))}
+                      className="w-7 h-7 rounded-full border-2 transition-all"
+                      style={{ backgroundColor: c, borderColor: newZone.color === c ? "#0f2f26" : "transparent", transform: newZone.color === c ? "scale(1.2)" : "scale(1)" }}
+                    />
+                  ))}
+                </div>
+              </div>
+
+              <div className="flex gap-2 pt-1">
+                <button
+                  type="button"
+                  onClick={() => { setShowAddZone(false); setDrawingPolygon(null); setIsDrawingMode(false); }}
+                  className="flex-1 py-2 text-sm border border-gray-200 rounded-lg text-gray-600 hover:bg-gray-50"
+                >
+                  Cancelar
+                </button>
+                <button
+                  type="button"
+                  onClick={createZone}
+                  disabled={savingZone || !newZone.name || (newZone.zoneType === "radius" && !newZone.radiusKm) || (newZone.zoneType === "polygon" && !drawingPolygon)}
+                  className="flex-1 py-2 text-sm rounded-lg text-white font-medium disabled:opacity-50"
+                  style={{ backgroundColor: "#0f2f26" }}
+                >
+                  {savingZone ? "Guardando..." : "Guardar zona"}
+                </button>
+              </div>
+            </div>
+          )}
+        </div>
 
       {/* ── TAB: Apariencia ── */}
       {tab === "appearance" && (

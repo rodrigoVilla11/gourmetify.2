@@ -7,6 +7,7 @@ import { ZodError } from "zod";
 import { buildExcel, excelResponse } from "@/utils/excel";
 import { format as fmtDate } from "date-fns";
 import { requireOrg } from "@/lib/requireOrg";
+import { computeOrderPricing, type DiscountConfig, type DiscountContext } from "@/lib/pricingUtils";
 
 export async function GET(req: NextRequest) {
   let orgId: string;
@@ -97,7 +98,9 @@ export async function GET(req: NextRequest) {
               product: { select: { name: true } },
             },
           },
-          payments: { select: { paymentMethod: true, amount: true } },
+          payments: { select: { paymentMethod: true, amount: true, confirmedAt: true } },
+          discountAmount: true,
+          discountsSnapshot: true,
           combos: {
             select: {
               id: true,
@@ -126,7 +129,7 @@ export async function POST(req: NextRequest) {
   try { orgId = requireOrg(req); } catch (e) { return e as Response; }
   try {
     const body = await req.json();
-    const { date, notes, customerId, customerName, orderType, deliveryAddress, repartidorId, items, comboItems, payments } = CreateSaleSchema.parse(body);
+    const { date, notes, customerId, customerName, orderType, deliveryAddress, repartidorId, items, comboItems, payments, paymentAdjustmentType, paymentAdjustmentPct, paymentAdjustmentAmount, paymentMethodSnapshot, selectedExtras } = CreateSaleSchema.parse(body);
     const isPaid = typeof body.isPaid === "boolean" ? body.isPaid : !!(payments && payments.length > 0 && payments.some((p: { amount: number }) => p.amount > 0));
 
     // ── Step 1: Load products to compute total ─────────────────────────────────
@@ -134,7 +137,7 @@ export async function POST(req: NextRequest) {
     const products = productIds.length > 0
       ? await prisma.product.findMany({
           where: { id: { in: productIds }, isActive: true, organizationId: orgId },
-          select: { id: true, salePrice: true },
+          select: { id: true, salePrice: true, categoryId: true },
         })
       : [];
 
@@ -176,7 +179,7 @@ export async function POST(req: NextRequest) {
       orgDeliveryFee = Number(org?.deliveryFee ?? 0);
     }
 
-    const saleTotal =
+    const itemsSubtotal =
       items.reduce((sum, item) => {
         const product = productMap.get(item.productId)!;
         return sum + Number(product.salePrice) * item.quantity;
@@ -184,8 +187,72 @@ export async function POST(req: NextRequest) {
       (comboItems ?? []).reduce((sum, ci) => {
         const combo = comboMap.get(ci.comboId)!;
         return sum + Number(combo.salePrice) * ci.quantity;
-      }, 0) +
-      orgDeliveryFee;
+      }, 0);
+
+    // ── Step 2b: Load extras if any ───────────────────────────────────────────
+    let extrasAmount = 0;
+    let loadedExtras: Array<{ id: string; name: string; price: number; isFree: boolean; affectsStock: boolean; ingredientId: string | null; ingredientQty: number | null }> = [];
+    if (selectedExtras && selectedExtras.length > 0) {
+      const extraIds = selectedExtras.map((e) => e.extraId);
+      const dbExtras = await prisma.extra.findMany({
+        where: { id: { in: extraIds }, organizationId: orgId, isActive: true },
+        select: { id: true, name: true, price: true, isFree: true, affectsStock: true, ingredientId: true, ingredientQty: true },
+      });
+      loadedExtras = dbExtras.map((e) => ({
+        id: e.id, name: e.name, price: Number(e.price), isFree: e.isFree,
+        affectsStock: e.affectsStock, ingredientId: e.ingredientId, ingredientQty: e.ingredientQty ? Number(e.ingredientQty) : null,
+      }));
+      extrasAmount = selectedExtras.reduce((sum, se) => {
+        const ex = loadedExtras.find((e) => e.id === se.extraId);
+        return sum + (ex && !ex.isFree ? ex.price * se.quantity : 0);
+      }, 0);
+    }
+
+    // ── Step 2c: Load active discounts and find best ───────────────────────────
+    const activeDiscounts = await prisma.discount.findMany({
+      where: { organizationId: orgId, isActive: true },
+    });
+    const paymentMethod = payments && payments.length === 1 ? payments[0].paymentMethod : undefined;
+    const categoryIds = products.map((p) => (p as unknown as { categoryId?: string | null }).categoryId).filter(Boolean) as string[];
+    const discountCtx: DiscountContext = {
+      now:           new Date(),
+      paymentMethod,
+      productIds:    productIds,
+      categoryIds,
+    };
+    const discountConfigs: DiscountConfig[] = activeDiscounts.map((d) => ({
+      id:             d.id,
+      name:           d.name,
+      label:          d.label,
+      discountType:   d.discountType,
+      value:          Number(d.value),
+      priority:       d.priority,
+      isActive:       d.isActive,
+      dateFrom:       d.dateFrom ? d.dateFrom.toISOString().slice(0, 10) : null,
+      dateTo:         d.dateTo   ? d.dateTo.toISOString().slice(0, 10)   : null,
+      timeFrom:       d.timeFrom,
+      timeTo:         d.timeTo,
+      weekdays:       d.weekdays as number[] | null,
+      appliesTo:      d.appliesTo,
+      productIds:     d.productIds as string[] | null,
+      categoryIds:    d.categoryIds as string[] | null,
+      paymentMethods: d.paymentMethods as string[] | null,
+    }));
+
+    const pricing = computeOrderPricing({
+      itemsSubtotal,
+      deliveryFee: orgDeliveryFee,
+      extras: selectedExtras?.map((se) => {
+        const ex = loadedExtras.find((e) => e.id === se.extraId);
+        return { price: ex?.price ?? 0, quantity: se.quantity, isFree: ex?.isFree ?? false };
+      }) ?? [],
+      discounts: discountConfigs,
+      discountCtx,
+      paymentAdjustmentAmount: paymentAdjustmentAmount ?? 0,
+    });
+
+    const finalTotal = Math.round(pricing.total * 100) / 100;
+    const adjAmount = paymentAdjustmentAmount ?? 0;
 
     // ── Step 3: Compute daily order number ────────────────────────────────────
     const dayStart = new Date();
@@ -197,12 +264,21 @@ export async function POST(req: NextRequest) {
     });
     const dailyOrderNumber = todayCount + 1;
 
-    // ── Step 4: Create sale (NO stock deduction — happens on EN_PREPARACION) ───
+    // ── Step 4: Create sale (NO stock deduction — happens on ENTREGADO) ───────
+    const discountSnapshot = pricing.appliedDiscount ? {
+      discountId:    pricing.appliedDiscount.id,
+      name:          pricing.appliedDiscount.name,
+      label:         pricing.appliedDiscount.label ?? null,
+      discountType:  pricing.appliedDiscount.discountType,
+      value:         pricing.appliedDiscount.value,
+      amountApplied: pricing.discountAmount,
+    } : null;
+
     const sale = await prisma.sale.create({
       data: {
         date: date ? new Date(date) : new Date(),
         notes,
-        total: saleTotal,
+        total: finalTotal,
         organizationId: orgId,
         customerId: customerId ?? null,
         customerName: customerName ?? null,
@@ -213,6 +289,17 @@ export async function POST(req: NextRequest) {
         deliveryAddress: deliveryAddress ?? null,
         deliveryFee: orgDeliveryFee > 0 ? orgDeliveryFee : null,
         repartidorId: repartidorId ?? null,
+        extrasAmount:   pricing.extrasAmount > 0 ? pricing.extrasAmount : null,
+        discountAmount: pricing.discountAmount > 0 ? pricing.discountAmount : null,
+        discountsSnapshot: discountSnapshot ? discountSnapshot : undefined,
+        ...(paymentAdjustmentType && paymentAdjustmentType !== "none" ? {
+          paymentAdjustmentType,
+          paymentAdjustmentPct,
+          paymentAdjustmentAmount: adjAmount !== 0 ? adjAmount : null,
+          paymentMethodSnapshot: paymentMethodSnapshot ?? null,
+        } : {}),
+        cashImpacted: isPaid,
+        cashImpactedAt: isPaid ? new Date() : null,
         items: {
           create: items.map((i) => ({
             productId: i.productId,
@@ -236,7 +323,27 @@ export async function POST(req: NextRequest) {
                 create: payments.map((p) => ({
                   paymentMethod: p.paymentMethod,
                   amount: p.amount,
+                  confirmedAt: new Date(),
                 })),
+              },
+            }
+          : {}),
+        ...(selectedExtras && selectedExtras.length > 0
+          ? {
+              saleExtras: {
+                create: selectedExtras.map((se) => {
+                  const ex = loadedExtras.find((e) => e.id === se.extraId)!;
+                  return {
+                    extraId:              se.extraId,
+                    quantity:             se.quantity,
+                    nameSnapshot:         ex?.name ?? "Desconocido",
+                    priceSnapshot:        ex?.price ?? 0,
+                    isFreeSnapshot:       ex?.isFree ?? false,
+                    affectsStockSnapshot: ex?.affectsStock ?? false,
+                    ingredientId:         ex?.ingredientId ?? null,
+                    ingredientQtySnapshot: ex?.ingredientQty ?? null,
+                  };
+                }),
               },
             }
           : {}),

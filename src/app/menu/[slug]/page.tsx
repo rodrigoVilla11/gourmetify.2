@@ -1,7 +1,9 @@
 "use client";
-import { useState, useEffect, useCallback, useRef } from "react";
+import { useState, useEffect, useCallback, useRef, useMemo } from "react";
 import { useParams } from "next/navigation";
 import { formatCurrency } from "@/utils/currency";
+import { ExtrasModal, getExtrasForProduct, type ExtraConfig } from "@/components/extras/ExtrasModal";
+import { findBestDiscount, type DiscountConfig, type DiscountContext } from "@/lib/pricingUtils";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -25,6 +27,8 @@ interface OrgData {
   colorSecondary: string | null;
   colorAccent: string | null;
   coverImageUrl: string | null;
+  whatsapp: string | null;
+  phone: string | null;
 }
 
 interface MenuProduct {
@@ -54,6 +58,7 @@ interface CartItem {
 
 type OrderType = "SALON" | "TAKEAWAY" | "DELIVERY";
 type Step = "menu" | "checkout" | "success";
+type ZoneStatus = "idle" | "checking" | "covered" | "uncovered" | "error";
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -83,12 +88,21 @@ const MODALITY_ICONS: Record<OrderType, React.ReactNode> = {
   ),
 };
 
+// Maps config keys (from /config paymentMethods) → canonical method codes (same as /comandas PM_MAP)
+const KEY_TO_METHOD: Record<string, string> = {
+  cash:        "EFECTIVO",
+  transfer:    "TRANSFERENCIA",
+  mercadopago: "ONLINE",
+  debit:       "DEBITO",
+  credit:      "CREDITO",
+};
+
 const PAYMENT_LABELS: Record<string, string> = {
-  EFECTIVO: "Efectivo",
+  EFECTIVO:      "Efectivo",
   TRANSFERENCIA: "Transferencia",
-  ONLINE: "Mercado Pago",
-  DEBITO: "Débito",
-  CREDITO: "Crédito",
+  ONLINE:        "Mercado Pago",
+  DEBITO:        "Débito",
+  CREDITO:       "Crédito",
 };
 
 const PAYMENT_ICONS: Record<string, React.ReactNode> = {
@@ -132,15 +146,15 @@ function getEnabledPayments(paymentMethods: OrgData["paymentMethods"]): string[]
   if (!paymentMethods) return ["EFECTIVO"];
   return Object.entries(paymentMethods)
     .filter(([, cfg]) => cfg.enabled)
-    .map(([key]) => key.toUpperCase());
+    .map(([key]) => KEY_TO_METHOD[key])
+    .filter(Boolean) as string[];
 }
 
 function getMethodConfig(paymentMethods: OrgData["paymentMethods"], displayKey: string): PaymentMethodConfig | null {
   if (!paymentMethods) return null;
-  for (const [k, v] of Object.entries(paymentMethods)) {
-    if (k.toUpperCase() === displayKey) return v;
-  }
-  return null;
+  const configKey = Object.entries(KEY_TO_METHOD).find(([, v]) => v === displayKey)?.[0];
+  if (!configKey) return null;
+  return paymentMethods[configKey] ?? null;
 }
 
 // Lighten a hex color by mixing with white
@@ -162,6 +176,10 @@ export default function PublicMenuPage() {
 
   const [orgData, setOrgData] = useState<OrgData | null>(null);
   const [categories, setCategories] = useState<MenuCategory[]>([]);
+  const [menuExtras,    setMenuExtras]    = useState<ExtraConfig[]>([]);
+  const [menuDiscounts, setMenuDiscounts] = useState<DiscountConfig[]>([]);
+  const [extrasModalProduct, setExtrasModalProduct] = useState<MenuProduct | null>(null);
+  const [cartExtras, setCartExtras] = useState<{ extraId: string; quantity: number; name: string; price: number; isFree: boolean }[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -178,7 +196,13 @@ export default function PublicMenuPage() {
   const [submitting, setSubmitting] = useState(false);
   const [orderId, setOrderId] = useState<string | null>(null);
   const [submitAttempted, setSubmitAttempted] = useState(false);
-  const [summaryOpen, setSummaryOpen] = useState(false);
+  const [zoneStatus, setZoneStatus] = useState<ZoneStatus>("idle");
+  const [matchedZone, setMatchedZone] = useState<{ name: string; price: number } | null>(null);
+  const zoneCheckTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const addressInputRef = useRef<HTMLInputElement>(null);
+  const [suggestions, setSuggestions] = useState<{ description: string; placeId: string }[]>([]);
+  const [showSuggestions, setShowSuggestions] = useState(false);
+  const suggestTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const fetchMenu = useCallback(async () => {
     try {
@@ -190,6 +214,8 @@ export default function PublicMenuPage() {
       if (data.categories.length > 0) setActiveCategory(data.categories[0].id ?? "otros");
       const enabledModalities = getEnabledModalities(data.org.modalities);
       setOrderType(enabledModalities[0]);
+      if (data.extras) setMenuExtras(data.extras);
+      if (data.discounts) setMenuDiscounts(data.discounts.map((d: DiscountConfig) => ({ ...d, value: Number(d.value) })));
     } catch {
       setError("Error al cargar el menú");
     } finally {
@@ -202,11 +228,33 @@ export default function PublicMenuPage() {
   // ── Cart helpers ──────────────────────────────────────────────────────────
 
   const addToCart = (product: MenuProduct) => {
+    const applicable = getExtrasForProduct({ id: product.id, categoryId: product.categoryId }, menuExtras);
+    if (applicable.length > 0) {
+      setExtrasModalProduct(product);
+      return;
+    }
+    addToCartDirect(product, []);
+  };
+
+  const addToCartDirect = (product: MenuProduct, extras: { extraId: string; quantity: number }[]) => {
     setCart((prev) => {
       const existing = prev.find((i) => i.productId === product.id);
       if (existing) return prev.map((i) => i.productId === product.id ? { ...i, quantity: i.quantity + 1 } : i);
       return [...prev, { productId: product.id, name: product.name, price: product.salePrice, currency: product.currency, quantity: 1 }];
     });
+    if (extras.length > 0) {
+      setCartExtras((prev) => {
+        const next = [...prev];
+        for (const sel of extras) {
+          const extraConfig = menuExtras.find((e) => e.id === sel.extraId);
+          if (!extraConfig) continue;
+          const existing = next.find((x) => x.extraId === sel.extraId);
+          if (existing) { existing.quantity += sel.quantity; }
+          else { next.push({ extraId: sel.extraId, quantity: sel.quantity, name: extraConfig.name, price: extraConfig.price, isFree: extraConfig.isFree }); }
+        }
+        return next;
+      });
+    }
   };
 
   const updateQty = (productId: string, delta: number) => {
@@ -215,8 +263,28 @@ export default function PublicMenuPage() {
 
   const cartCount = cart.reduce((s, i) => s + i.quantity, 0);
   const cartTotal = cart.reduce((s, i) => s + i.price * i.quantity, 0);
-  const deliveryFee = orderType === "DELIVERY" ? (orgData?.deliveryFee ?? 0) : 0;
-  const orderTotal = cartTotal + deliveryFee;
+  const extrasTotal = cartExtras.reduce((s, e) => s + (e.isFree ? 0 : e.price * e.quantity), 0);
+  const deliveryFee = orderType === "DELIVERY"
+    ? (matchedZone !== null ? matchedZone.price : (orgData?.deliveryFee ?? 0))
+    : 0;
+  const subtotalBeforeDiscount = cartTotal + extrasTotal + deliveryFee;
+
+  // Best applicable discount (real-time, depends on selected payment method)
+  const bestMenuDiscount = useMemo(() => {
+    if (menuDiscounts.length === 0) return null;
+    const paymentMethod = selectedMethods.length === 1 ? selectedMethods[0] : undefined;
+    const productIds = cart.map((i) => i.productId);
+    const categoryIds = cart.map((i) => {
+      const product = categories.flatMap((c) => c.products).find((p) => p.id === i.productId);
+      return product?.categoryId ?? null;
+    }).filter((id): id is string => id !== null);
+    const ctx: DiscountContext = { now: new Date(), paymentMethod, productIds, categoryIds };
+    return findBestDiscount(menuDiscounts, subtotalBeforeDiscount, ctx);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [menuDiscounts, selectedMethods, cart, subtotalBeforeDiscount]);
+  const menuDiscountAmount = bestMenuDiscount?.amount ?? 0;
+
+  const orderTotal = subtotalBeforeDiscount - menuDiscountAmount;
 
   // ── Payment helpers ───────────────────────────────────────────────────────
 
@@ -227,6 +295,72 @@ export default function PublicMenuPage() {
       prev.includes(method) ? prev.filter((m) => m !== method) : [...prev, method]
     );
   };
+
+  // Adjusted total based on single selected payment method
+  const selectedMethodConfig = selectedMethods.length === 1
+    ? getMethodConfig(orgData?.paymentMethods ?? null, selectedMethods[0])
+    : null;
+  const adjType = selectedMethodConfig?.adjustmentType;
+  const adjPct  = selectedMethodConfig?.adjustmentPct ?? 0;
+  const adjustedOrderTotal = selectedMethodConfig && adjType && adjType !== "none"
+    ? Math.round(orderTotal * (adjType === "surcharge" ? 1 + adjPct / 100 : 1 - adjPct / 100))
+    : orderTotal;
+  const paymentAdjustmentAmount = adjustedOrderTotal - orderTotal; // negative=discount, positive=surcharge
+
+  // ── Address suggestions (server-side proxy, no client-side Maps JS) ────────
+
+  const fetchSuggestions = useCallback(async (input: string) => {
+    if (input.trim().length < 3) { setSuggestions([]); setShowSuggestions(false); return; }
+    try {
+      const res = await fetch(`/api/public/${slug}/places-autocomplete?input=${encodeURIComponent(input)}`);
+      const data = await res.json();
+      setSuggestions(data.predictions ?? []);
+      setShowSuggestions((data.predictions ?? []).length > 0);
+    } catch {
+      setSuggestions([]);
+    }
+  }, [slug]);
+
+  // ── Zone check ────────────────────────────────────────────────────────────
+
+  const checkZone = useCallback(async (addr: string) => {
+    if (!addr.trim()) { setZoneStatus("idle"); setMatchedZone(null); return; }
+    setZoneStatus("checking");
+    try {
+      const res = await fetch(`/api/public/${slug}/zone-check`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ address: addr }),
+      });
+      const data = await res.json();
+      if (data.covered && data.zone) {
+        setZoneStatus("covered");
+        setMatchedZone({ name: data.zone.name, price: Number(data.zone.price) });
+      } else if (data.covered && !data.zone) {
+        // No zones configured — always covered with flat fee
+        setZoneStatus("covered");
+        setMatchedZone(null);
+      } else {
+        setZoneStatus("uncovered");
+        setMatchedZone(null);
+      }
+    } catch {
+      setZoneStatus("error");
+      setMatchedZone(null);
+    }
+  }, [slug]);
+
+  // Reset zone state when switching away from DELIVERY
+  useEffect(() => {
+    if (orderType !== "DELIVERY") {
+      setZoneStatus("idle");
+      setMatchedZone(null);
+      setSuggestions([]);
+      setShowSuggestions(false);
+      if (zoneCheckTimerRef.current) clearTimeout(zoneCheckTimerRef.current);
+      if (suggestTimerRef.current) clearTimeout(suggestTimerRef.current);
+    }
+  }, [orderType]);
 
   // ── Category scroll ───────────────────────────────────────────────────────
 
@@ -242,8 +376,22 @@ export default function PublicMenuPage() {
     setSubmitAttempted(true);
     if (!customerName.trim() || cart.length === 0) return;
     if (orderType === "DELIVERY" && !customerAddress.trim()) return;
+    if (orderType === "DELIVERY" && zoneStatus === "uncovered") return;
+    // If zone hasn't been checked yet, check now and block
+    if (orderType === "DELIVERY" && zoneStatus === "idle" && customerAddress.trim()) {
+      await checkZone(customerAddress);
+      return; // let the user see the result before resubmitting
+    }
     setSubmitting(true);
     try {
+      const discountSnapshot = bestMenuDiscount ? {
+        discountId:    bestMenuDiscount.discount.id,
+        name:          bestMenuDiscount.discount.name,
+        label:         bestMenuDiscount.discount.label ?? null,
+        discountType:  bestMenuDiscount.discount.discountType,
+        value:         bestMenuDiscount.discount.value,
+        amountApplied: menuDiscountAmount,
+      } : null;
       const res = await fetch(`/api/public/${slug}/order`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -255,12 +403,44 @@ export default function PublicMenuPage() {
           payments: selectedMethods.map((m) => ({ paymentMethod: m })),
           items: cart.map((i) => ({ productId: i.productId, quantity: i.quantity })),
           comboItems: [],
+          selectedExtras: cartExtras.map((e) => ({ extraId: e.extraId, quantity: e.quantity })),
+          ...(discountSnapshot ? { appliedDiscount: discountSnapshot, discountAmount: menuDiscountAmount } : {}),
+          ...(extrasTotal > 0 ? { extrasAmount: extrasTotal } : {}),
+          ...(selectedMethods.length === 1 && adjType && adjType !== "none" ? {
+            paymentAdjustmentType:   adjType,
+            paymentAdjustmentPct:    adjPct,
+            paymentAdjustmentAmount: paymentAdjustmentAmount,
+            paymentMethodSnapshot:   orgData?.paymentMethods ?? null,
+          } : {}),
         }),
       });
       const data = await res.json();
       if (!res.ok) { alert(data.error ?? "Error al enviar pedido"); return; }
       setOrderId(data.id);
       setStep("success");
+
+      // Send WhatsApp notification to restaurant
+      const waPhone = orgData?.whatsapp || orgData?.phone;
+      if (waPhone && data.id) {
+        const trackUrl = `${window.location.origin}/menu/${slug}/order/${data.id}`;
+        const methodLabels = selectedMethods.map((m) => PAYMENT_LABELS[m] ?? m).join(", ");
+        const itemsText = cart.map((i) => `  • ${i.quantity}x ${i.name}`).join("\n");
+        const deliveryLine = orderType === "DELIVERY" && customerAddress.trim()
+          ? `\n🏠 *Dirección:* ${customerAddress.trim()}`
+          : orderType === "TAKEAWAY" ? "\n🛍️ *Modalidad:* Takeaway" : "\n🪑 *Modalidad:* Salón";
+        const feeLine = deliveryFee > 0 ? `\n💰 *Envío:* ${formatCurrency(deliveryFee, "ARS")}` : "";
+        const phoneLine = customerPhone.trim() ? `\n📱 *Tel:* ${customerPhone.trim()}` : "";
+        const msg = [
+          `🛒 *Nuevo pedido — ${orgData?.name ?? ""}*`,
+          `👤 *Cliente:* ${customerName.trim()}${phoneLine}${deliveryLine}`,
+          `\n*Productos:*\n${itemsText}${feeLine}`,
+          `💳 *Total:* ${formatCurrency(data.total ?? orderTotal, "ARS")}`,
+          methodLabels ? `💳 *Pago:* ${methodLabels}` : "",
+          `\n🔗 Ver pedido en vivo: ${trackUrl}`,
+        ].filter(Boolean).join("\n");
+        const waNum = waPhone.replace(/\D/g, "");
+        window.open(`https://wa.me/${waNum}?text=${encodeURIComponent(msg)}`, "_blank");
+      }
     } catch {
       alert("Error de conexión");
     } finally {
@@ -308,7 +488,31 @@ export default function PublicMenuPage() {
         </div>
         <h1 className="text-2xl font-bold text-gray-900 mb-1">¡Pedido enviado!</h1>
         <p className="text-gray-400 text-sm mb-1">Pedido <span className="font-mono font-semibold text-gray-700">#{orderId?.slice(-6).toUpperCase()}</span></p>
-        <p className="text-gray-400 text-sm mb-8">El local lo confirmará en breve.</p>
+        <p className="text-gray-400 text-sm mb-3">El local lo confirmará en breve.</p>
+
+        {selectedMethods.length > 0 && (
+          <div className="flex items-start gap-2 text-left bg-blue-50 border border-blue-200 rounded-xl px-4 py-3 mb-5">
+            <svg className="w-4 h-4 text-blue-500 shrink-0 mt-0.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+              <path strokeLinecap="round" strokeLinejoin="round" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+            </svg>
+            <p className="text-xs text-blue-700">Tu método de pago está pendiente de confirmación por la cajera.</p>
+          </div>
+        )}
+
+        {/* Tracking link */}
+        {orderId && (
+          <a
+            href={`/menu/${slug}/order/${orderId}`}
+            className="flex items-center justify-center gap-2 w-full h-12 rounded-2xl border-2 font-semibold text-sm mb-4 transition-all active:scale-[0.98]"
+            style={{ borderColor: primary, color: primary }}
+          >
+            <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+              <path strokeLinecap="round" strokeLinejoin="round" d="M9 20l-5.447-2.724A1 1 0 013 16.382V5.618a1 1 0 011.447-.894L9 7m0 13l6-3m-6 3V7m6 10l4.553 2.276A1 1 0 0021 18.382V7.618a1 1 0 00-.553-.894L15 4m0 13V4m0 0L9 7" />
+            </svg>
+            Seguir estado del pedido en vivo
+          </a>
+        )}
+
         <div className="bg-white rounded-2xl p-4 mb-5 text-left shadow-sm border border-gray-100 space-y-2">
           {cart.map((item) => (
             <div key={item.productId} className="flex justify-between text-sm py-1 border-b border-gray-50 last:border-0">
@@ -327,7 +531,7 @@ export default function PublicMenuPage() {
           </div>
         </div>
         <button
-          onClick={() => { setCart([]); setSelectedMethods([]); setCustomerName(""); setCustomerPhone(""); setCustomerAddress(""); setStep("menu"); }}
+          onClick={() => { setCart([]); setCartExtras([]); setSelectedMethods([]); setCustomerName(""); setCustomerPhone(""); setCustomerAddress(""); setZoneStatus("idle"); setMatchedZone(null); setSuggestions([]); setShowSuggestions(false); setExtrasModalProduct(null); setStep("menu"); }}
           className="w-full h-14 rounded-2xl text-white font-bold text-base shadow-xl transition-all active:scale-[0.98] hover:opacity-90"
           style={{ backgroundColor: primary }}
         >
@@ -417,6 +621,23 @@ export default function PublicMenuPage() {
                         {product.description && (
                           <p className="text-gray-400 text-sm line-clamp-2 leading-relaxed">{product.description}</p>
                         )}
+                        {(() => {
+                          const applicable = menuDiscounts.filter((d) => {
+                            if (!d.isActive) return false;
+                            if (d.appliesTo === "ORDER") return true;
+                            if (d.appliesTo === "PRODUCTS") return d.productIds?.includes(product.id) ?? false;
+                            if (d.appliesTo === "CATEGORIES") return product.categoryId ? (d.categoryIds?.includes(product.categoryId) ?? false) : false;
+                            return false;
+                          });
+                          if (applicable.length === 0) return null;
+                          const best = applicable.reduce((a, b) => a.value >= b.value ? a : b);
+                          const badge = best.label ?? (best.discountType === "PERCENTAGE" ? `${best.value}% OFF` : `-$${best.value}`);
+                          return (
+                            <span className="text-[11px] font-bold text-emerald-600 bg-emerald-50 border border-emerald-100 px-2 py-0.5 rounded-full w-fit">
+                              {badge}
+                            </span>
+                          );
+                        })()}
                         <div className="mt-3 flex items-center justify-between gap-2">
                           <span className="font-bold text-lg" style={{ color: primary }}>
                             {formatCurrency(product.salePrice, product.currency as import("@/types").Currency)}
@@ -618,24 +839,102 @@ export default function PublicMenuPage() {
 
                 {orderType === "DELIVERY" && (
                   <>
-                    <div className={`relative w-full rounded-xl border bg-white overflow-hidden focus-within:ring-2 transition-all ${submitAttempted && !customerAddress.trim() ? "border-red-300" : "border-gray-200"}`}>
-                      <textarea
+                    <div className="relative">
+                    <div className={`flex w-full items-stretch rounded-xl border bg-white focus-within:ring-2 transition-all ${
+                      zoneStatus === "uncovered" ? "border-red-300 focus-within:ring-red-200" :
+                      zoneStatus === "covered"   ? "border-emerald-300 focus-within:ring-emerald-200" :
+                      submitAttempted && !customerAddress.trim() ? "border-red-300" : "border-gray-200"
+                    }`}>
+                      <input
+                        ref={addressInputRef}
+                        type="text"
                         value={customerAddress}
-                        onChange={(e) => setCustomerAddress(e.target.value)}
-                        placeholder="Calle, número, departamento o referencias..."
-                        autoComplete="street-address"
-                        className="w-full border-none bg-transparent min-h-[100px] p-4 pt-10 text-base focus:outline-none placeholder-gray-300 text-gray-900 resize-none"
+                        onChange={(e) => {
+                          const val = e.target.value;
+                          setCustomerAddress(val);
+                          setZoneStatus("idle");
+                          setMatchedZone(null);
+                          if (zoneCheckTimerRef.current) clearTimeout(zoneCheckTimerRef.current);
+                          if (suggestTimerRef.current) clearTimeout(suggestTimerRef.current);
+                          suggestTimerRef.current = setTimeout(() => fetchSuggestions(val), 300);
+                        }}
+                        onBlur={(e) => {
+                          setTimeout(() => setShowSuggestions(false), 150);
+                          if (e.target.value.trim() && zoneStatus === "idle") {
+                            checkZone(e.target.value.trim());
+                          }
+                        }}
+                        placeholder="Calle, número, piso..."
+                        autoComplete="off"
+                        className="flex-1 h-14 px-4 text-base bg-transparent focus:outline-none placeholder-gray-300 text-gray-900"
                       />
-                      <div className="absolute top-3 left-4 flex items-center gap-1.5 text-gray-400 pointer-events-none">
-                        <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                      <div className="flex items-center pr-4 text-gray-300">
+                        <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.8}>
                           <path strokeLinecap="round" strokeLinejoin="round" d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z" />
                           <path strokeLinecap="round" strokeLinejoin="round" d="M15 11a3 3 0 11-6 0 3 3 0 016 0z" />
                         </svg>
-                        <span className="text-[10px] font-bold uppercase tracking-widest">Direccion completa</span>
                       </div>
                     </div>
+                    {/* Suggestions dropdown */}
+                    {showSuggestions && suggestions.length > 0 && (
+                      <div className="absolute left-0 right-0 top-full mt-1 z-50 bg-white rounded-xl border border-gray-200 shadow-xl overflow-hidden">
+                        {suggestions.map((s) => (
+                          <button
+                            key={s.placeId}
+                            type="button"
+                            onMouseDown={(e) => e.preventDefault()}
+                            onClick={() => {
+                              setCustomerAddress(s.description);
+                              setSuggestions([]);
+                              setShowSuggestions(false);
+                              setZoneStatus("idle");
+                              setMatchedZone(null);
+                              checkZone(s.description);
+                            }}
+                            className="w-full text-left px-4 py-3 text-sm text-gray-800 hover:bg-gray-50 border-b border-gray-100 last:border-0 flex items-start gap-3"
+                          >
+                            <svg className="w-4 h-4 mt-0.5 shrink-0 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.8}>
+                              <path strokeLinecap="round" strokeLinejoin="round" d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z" />
+                              <path strokeLinecap="round" strokeLinejoin="round" d="M15 11a3 3 0 11-6 0 3 3 0 016 0z" />
+                            </svg>
+                            <span className="leading-snug">{s.description}</span>
+                          </button>
+                        ))}
+                      </div>
+                    )}
+                    </div>
+                    {/* Zone feedback */}
+                    {zoneStatus === "checking" && (
+                      <div className="flex items-center gap-2 text-xs text-gray-400 ml-1">
+                        <svg className="w-3 h-3 animate-spin" fill="none" viewBox="0 0 24 24">
+                          <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"/>
+                          <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/>
+                        </svg>
+                        Verificando cobertura...
+                      </div>
+                    )}
+                    {zoneStatus === "covered" && matchedZone && (
+                      <div className="flex items-center gap-1.5 text-sm text-emerald-700 bg-emerald-50 rounded-xl px-3 py-2">
+                        <svg className="w-4 h-4 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+                          <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7"/>
+                        </svg>
+                        <span className="font-semibold">{matchedZone.name}</span>
+                        <span className="text-emerald-500 ml-auto font-bold">+{formatCurrency(matchedZone.price, "ARS")}</span>
+                      </div>
+                    )}
+                    {zoneStatus === "uncovered" && (
+                      <div className="flex items-center gap-1.5 text-sm text-red-600 bg-red-50 rounded-xl px-3 py-2">
+                        <svg className="w-4 h-4 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                          <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12"/>
+                        </svg>
+                        No llegamos a esa dirección. Probá con otra o elegí retiro en local.
+                      </div>
+                    )}
                     {submitAttempted && !customerAddress.trim() && (
-                      <p className="text-xs text-red-500 ml-1">Ingresa la direccion de entrega</p>
+                      <p className="text-xs text-red-500 ml-1">Ingresá la dirección de entrega</p>
+                    )}
+                    {submitAttempted && zoneStatus === "uncovered" && (
+                      <p className="text-xs text-red-500 ml-1">No hay cobertura para esa dirección</p>
                     )}
                   </>
                 )}
@@ -735,15 +1034,51 @@ export default function PublicMenuPage() {
           {/* Footer CTA */}
           <footer className="shrink-0 p-4 bg-[#f6f7f7]/90 backdrop-blur-xl border-t border-gray-100">
             <div className="flex flex-col gap-4">
-              <div className="flex items-center justify-between px-2">
-                <span className="text-sm font-semibold text-gray-500">Total a pagar</span>
-                <span className="text-2xl font-black text-gray-900">{formatCurrency(orderTotal, "ARS")}</span>
-              </div>
+              {/* Pricing breakdown */}
+              {(extrasTotal > 0 || menuDiscountAmount > 0 || adjustedOrderTotal !== orderTotal) ? (
+                <div className="space-y-1 px-2">
+                  <div className="flex items-center justify-between">
+                    <span className="text-sm text-gray-400">Subtotal</span>
+                    <span className="text-sm text-gray-500">{formatCurrency(cartTotal, "ARS")}</span>
+                  </div>
+                  {extrasTotal > 0 && (
+                    <div className="flex items-center justify-between">
+                      <span className="text-sm text-gray-400">Adicionales</span>
+                      <span className="text-sm text-blue-600">+{formatCurrency(extrasTotal, "ARS")}</span>
+                    </div>
+                  )}
+                  {menuDiscountAmount > 0 && bestMenuDiscount && (
+                    <div className="flex items-center justify-between">
+                      <span className="text-sm font-medium text-emerald-600">{bestMenuDiscount.discount.label ?? bestMenuDiscount.discount.name}</span>
+                      <span className="text-sm font-semibold text-emerald-600">−{formatCurrency(menuDiscountAmount, "ARS")}</span>
+                    </div>
+                  )}
+                  {adjustedOrderTotal !== orderTotal && (
+                    <div className="flex items-center justify-between">
+                      <span className="text-sm font-medium" style={{ color: adjType === "discount" ? "#16a34a" : "#d97706" }}>
+                        {adjType === "discount" ? `Descuento pago ${adjPct}%` : `Recargo pago ${adjPct}%`}
+                      </span>
+                      <span className="text-sm font-semibold" style={{ color: adjType === "discount" ? "#16a34a" : "#d97706" }}>
+                        {adjType === "discount" ? `−${formatCurrency(-paymentAdjustmentAmount, "ARS")}` : `+${formatCurrency(paymentAdjustmentAmount, "ARS")}`}
+                      </span>
+                    </div>
+                  )}
+                  <div className="flex items-center justify-between pt-1 border-t border-gray-200">
+                    <span className="text-sm font-semibold text-gray-500">Total a pagar</span>
+                    <span className="text-2xl font-black text-gray-900">{formatCurrency(adjustedOrderTotal, "ARS")}</span>
+                  </div>
+                </div>
+              ) : (
+                <div className="flex items-center justify-between px-2">
+                  <span className="text-sm font-semibold text-gray-500">Total a pagar</span>
+                  <span className="text-2xl font-black text-gray-900">{formatCurrency(orderTotal, "ARS")}</span>
+                </div>
+              )}
               <button
                 onClick={submitOrder}
-                disabled={submitting}
+                disabled={submitting || zoneStatus === "checking" || zoneStatus === "uncovered"}
                 className="w-full h-16 rounded-xl text-white font-bold text-lg flex items-center justify-center gap-2 active:scale-[0.98] transition-all shadow-xl disabled:opacity-60 disabled:cursor-not-allowed"
-                style={{ backgroundColor: primary }}
+                style={{ backgroundColor: zoneStatus === "uncovered" ? "#EF4444" : primary }}
               >
                 {submitting ? (
                   <>
@@ -771,6 +1106,19 @@ export default function PublicMenuPage() {
             </div>
           </footer>
         </div>
+      )}
+
+      {/* ── ExtrasModal ── */}
+      {extrasModalProduct && (
+        <ExtrasModal
+          isOpen={true}
+          onClose={() => setExtrasModalProduct(null)}
+          productName={extrasModalProduct.name}
+          extras={getExtrasForProduct({ id: extrasModalProduct.id, categoryId: extrasModalProduct.categoryId }, menuExtras)}
+          onConfirm={(sel) => { addToCartDirect(extrasModalProduct, sel); setExtrasModalProduct(null); }}
+          primaryColor={primary}
+          confirmLabel="Agregar al carrito"
+        />
       )}
     </div>
   );

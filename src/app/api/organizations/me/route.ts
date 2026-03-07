@@ -23,6 +23,8 @@ const UpdateOrgProfileSchema = z.object({
   colorAccent: z.string().optional().nullable(),
   coverImageUrl: z.string().optional().nullable().or(z.literal("")),
   deliveryFee: z.coerce.number().min(0).optional().nullable(),
+  addressLat: z.number().optional().nullable(),
+  addressLng: z.number().optional().nullable(),
 });
 
 const SELECT = {
@@ -33,6 +35,7 @@ const SELECT = {
   paymentMethods: true, businessHours: true, modalities: true,
   colorPrimary: true, colorSecondary: true, colorAccent: true, coverImageUrl: true,
   deliveryFee: true,
+  addressLat: true, addressLng: true,
 } as const;
 
 export async function GET(req: NextRequest) {

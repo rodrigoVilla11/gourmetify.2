@@ -88,7 +88,7 @@ export const SaleItemSchema = z.object({
 });
 
 export const SalePaymentSchema = z.object({
-  paymentMethod: PaymentMethodSchema,
+  paymentMethod: z.string().min(1, "Método de pago requerido"),
   amount: z.coerce.number().min(0, "Monto no puede ser negativo"),
 });
 
@@ -108,6 +108,20 @@ export const UpdateCustomerSchema = CreateCustomerSchema.partial();
 
 export const OrderTypeSchema = z.enum(["SALON", "TAKEAWAY", "DELIVERY"]);
 
+export const OrderExtraSchema = z.object({
+  extraId:  z.string(),
+  quantity: z.coerce.number().int().positive(),
+});
+
+export const OrderDiscountSnapshotSchema = z.object({
+  discountId:    z.string(),
+  name:          z.string(),
+  label:         z.string().optional().nullable(),
+  discountType:  z.string(),
+  value:         z.number(),
+  amountApplied: z.number(),
+});
+
 export const CreateSaleSchema = z.object({
   date: z.string().optional(),
   notes: z.string().optional().nullable(),
@@ -119,6 +133,14 @@ export const CreateSaleSchema = z.object({
   items: z.array(SaleItemSchema).default([]),
   comboItems: z.array(SaleComboItemSchema).optional(),
   payments: z.array(SalePaymentSchema).optional(),
+  paymentAdjustmentType:   z.enum(["none", "discount", "surcharge"]).optional(),
+  paymentAdjustmentPct:    z.coerce.number().min(0).max(100).optional(),
+  paymentAdjustmentAmount: z.coerce.number().optional(),
+  paymentMethodSnapshot:   z.any().optional(),
+  selectedExtras:  z.array(OrderExtraSchema).optional().default([]),
+  appliedDiscount: OrderDiscountSnapshotSchema.optional().nullable(),
+  extrasAmount:    z.coerce.number().optional(),
+  discountAmount:  z.coerce.number().optional(),
 }).refine(
   (d) => d.items.length > 0 || (d.comboItems && d.comboItems.length > 0),
   { message: "Al menos un producto o combo requerido" }
@@ -126,11 +148,17 @@ export const CreateSaleSchema = z.object({
 
 export const PaySaleSchema = z.object({
   payments: z.array(z.object({
-    paymentMethod: PaymentMethodSchema,
+    paymentMethod: z.string().min(1),
     amount:        z.coerce.number().min(0),
   })).min(1, "Al menos un método de pago requerido"),
   total:  z.coerce.number().positive().optional(),
   isPaid: z.boolean().default(true),
+  paymentAdjustmentType:   z.enum(["none", "discount", "surcharge"]).optional(),
+  paymentAdjustmentPct:    z.coerce.number().min(0).max(100).optional(),
+  paymentAdjustmentAmount: z.coerce.number().optional(),
+  paymentMethodSnapshot:   z.any().optional(),
+  discountAmount:          z.coerce.number().optional(),
+  discountsSnapshot:       z.any().optional().nullable(),
 });
 
 // ── Adjustments ──────────────────────────────────────────────────────────────
@@ -361,8 +389,9 @@ export const OrderStatusSchema = z.enum(["NUEVO", "EN_PREPARACION", "LISTO", "EN
 
 export const UpdateSaleStatusSchema = z.object({
   status: OrderStatusSchema,
-  rollbackStock:    z.boolean().optional(),
   rollbackPayments: z.boolean().optional(),
+  cancelStockDecision: z.enum(["deduct", "skip"]).optional(),
+  cancelCashDecision:  z.enum(["add", "skip"]).optional(),
 });
 
 // ── Users / Auth ───────────────────────────────────────────────────────────────
@@ -388,3 +417,47 @@ export const UpdateUserSchema = z.object({
   isActive: z.boolean().optional(),
   employeeId: z.string().cuid().optional().nullable(),
 });
+
+// ── Discounts ─────────────────────────────────────────────────────────────────
+
+export const CreateDiscountSchema = z.object({
+  name:          z.string().min(1, "Nombre requerido").max(255),
+  description:   z.string().optional().nullable(),
+  isActive:      z.boolean().default(true),
+  discountType:  z.enum(["PERCENTAGE", "FIXED"]).default("PERCENTAGE"),
+  value:         z.coerce.number().min(0, "Valor requerido"),
+  priority:      z.coerce.number().int().min(0).default(0),
+  label:         z.string().max(255).optional().nullable(),
+  dateFrom:      z.string().optional().nullable(),
+  dateTo:        z.string().optional().nullable(),
+  timeFrom:      z.string().max(5).optional().nullable(),
+  timeTo:        z.string().max(5).optional().nullable(),
+  weekdays:      z.array(z.number().int().min(0).max(6)).optional().nullable(),
+  appliesTo:     z.enum(["ORDER", "PRODUCTS", "CATEGORIES"]).default("ORDER"),
+  productIds:    z.array(z.string()).optional().nullable(),
+  categoryIds:   z.array(z.string()).optional().nullable(),
+  paymentMethods: z.array(z.string()).optional().nullable(),
+  sortOrder:     z.coerce.number().int().min(0).default(0),
+});
+
+export const UpdateDiscountSchema = CreateDiscountSchema.partial();
+
+// ── Extras ────────────────────────────────────────────────────────────────────
+
+export const CreateExtraSchema = z.object({
+  name:          z.string().min(1, "Nombre requerido").max(255),
+  description:   z.string().optional().nullable(),
+  isActive:      z.boolean().default(true),
+  price:         z.coerce.number().min(0).default(0),
+  isFree:        z.boolean().default(false),
+  affectsStock:  z.boolean().default(false),
+  ingredientId:  z.string().optional().nullable(),
+  ingredientQty: z.coerce.number().positive().optional().nullable(),
+  appliesTo:     z.enum(["ALL", "PRODUCTS", "CATEGORIES"]).default("ALL"),
+  productIds:    z.array(z.string()).optional().nullable(),
+  categoryIds:   z.array(z.string()).optional().nullable(),
+  maxQuantity:   z.coerce.number().int().positive().optional().nullable(),
+  sortOrder:     z.coerce.number().int().min(0).default(0),
+});
+
+export const UpdateExtraSchema = CreateExtraSchema.partial();

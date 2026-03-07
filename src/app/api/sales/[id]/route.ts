@@ -11,20 +11,27 @@ export async function GET(req: NextRequest, { params }: Params) {
   try { orgId = requireOrg(req); } catch (e) { return e as Response; }
 
   try {
-    const sale = await prisma.sale.findUnique({
-      where: { id: params.id, organizationId: orgId },
-      include: {
-        customer: { select: { id: true, name: true, phone: true, email: true, address: true } },
-        items: { include: { product: true } },
-        combos: { include: { combo: { select: { id: true, name: true, currency: true } } } },
-        payments: true,
-        stockMovements: { include: { ingredient: true }, orderBy: { createdAt: "asc" } },
-      },
-    });
+    const [sale, preparationMovements] = await Promise.all([
+      prisma.sale.findUnique({
+        where: { id: params.id, organizationId: orgId },
+        include: {
+          customer: { select: { id: true, name: true, phone: true, email: true, address: true } },
+          items: { include: { product: true } },
+          combos: { include: { combo: { select: { id: true, name: true, currency: true } } } },
+          payments: true,
+          stockMovements: { include: { ingredient: true }, orderBy: { createdAt: "asc" } },
+        },
+      }),
+      prisma.preparationMovement.findMany({
+        where: { organizationId: orgId, reason: `Venta ${params.id}`, type: "SALE" },
+        include: { preparation: { select: { id: true, name: true, unit: true } } },
+        orderBy: { createdAt: "asc" },
+      }),
+    ]);
     if (!sale) {
       return NextResponse.json({ error: "Venta no encontrada", code: "NOT_FOUND" }, { status: 404 });
     }
-    return NextResponse.json(sale);
+    return NextResponse.json({ ...sale, preparationMovements });
   } catch {
     return NextResponse.json({ error: "Error interno", code: "INTERNAL_ERROR" }, { status: 500 });
   }

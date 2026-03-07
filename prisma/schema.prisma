@@ -43,6 +43,9 @@ model Organization {
   colorSecondary String? @map("color_secondary")
   colorAccent    String? @map("color_accent")
   coverImageUrl  String? @map("cover_image_url")
+  // Delivery zones
+  addressLat    Float?   @map("address_lat")
+  addressLng    Float?   @map("address_lng")
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
@@ -70,8 +73,31 @@ model Organization {
   combos               Combo[]
   purchaseOrders       PurchaseOrder[]
   ingredientCostHistory IngredientCostHistory[]
+  deliveryZones        DeliveryZone[]
+  discounts            Discount[]
+  extras               Extra[]
 
   @@map("organizations")
+}
+
+model DeliveryZone {
+  id             String   @id @default(cuid())
+  organizationId String   @map("organization_id")
+  name           String
+  price          Decimal  @default(0)
+  zoneType       String   @default("radius") @map("zone_type")
+  radiusKm       Float?   @map("radius_km")
+  polygon        Json?
+  color          String   @default("#3B82F6")
+  sortOrder      Int      @default(0) @map("sort_order")
+  isActive       Boolean  @default(true) @map("is_active")
+  createdAt      DateTime @default(now()) @map("created_at")
+  updatedAt      DateTime @updatedAt      @map("updated_at")
+
+  organization Organization @relation(fields: [organizationId], references: [id])
+
+  @@index([organizationId, isActive])
+  @@map("delivery_zones")
 }
 
 // ── Core business models ───────────────────────────────────────────────────────
@@ -120,6 +146,7 @@ model Ingredient {
   preparationIngredients PreparationIngredient[]
   purchaseOrderItems     PurchaseOrderItem[]
   costHistory            IngredientCostHistory[]
+  extras                 Extra[]
 
   @@index([organizationId, isActive])
   @@index([supplierId])
@@ -237,6 +264,24 @@ model Sale {
   readyAt          DateTime? @map("ready_at")
   deliveredAt      DateTime? @map("delivered_at")
   delayMinutes     Int?      @map("delay_minutes")
+  // Payment adjustment (discount / surcharge)
+  paymentAdjustmentType   String?  @map("payment_adjustment_type")   // "discount" | "surcharge" | null
+  paymentAdjustmentPct    Decimal? @map("payment_adjustment_pct")
+  paymentAdjustmentAmount Decimal? @map("payment_adjustment_amount")  // negative=discount, positive=surcharge
+  paymentMethodSnapshot   Json?    @map("payment_method_snapshot")
+  // Impact flags
+  stockImpacted    Boolean   @default(false) @map("stock_impacted")
+  stockImpactedAt  DateTime? @map("stock_impacted_at")
+  cashImpacted     Boolean   @default(false) @map("cash_impacted")
+  cashImpactedAt   DateTime? @map("cash_impacted_at")
+  // Cancel decisions
+  cancelStockDecision String? @map("cancel_stock_decision")  // "deduct" | "skip"
+  cancelCashDecision  String? @map("cancel_cash_decision")   // "add" | "skip"
+  cancelledAt         DateTime? @map("cancelled_at")
+  // Extras & discounts
+  extrasAmount      Decimal?  @map("extras_amount")
+  discountAmount    Decimal?  @map("discount_amount")
+  discountsSnapshot Json?     @map("discounts_snapshot")
   createdAt        DateTime  @default(now())
 
   organization   Organization    @relation(fields: [organizationId], references: [id])
@@ -246,6 +291,7 @@ model Sale {
   stockMovements StockMovement[]
   payments       SalePayment[]
   combos         SaleCombo[]
+  saleExtras     SaleExtra[]
 
   @@index([organizationId, date])
   @@index([customerId])
@@ -267,10 +313,11 @@ model SaleItem {
 }
 
 model SalePayment {
-  id            String  @id @default(cuid())
+  id            String    @id @default(cuid())
   saleId        String
   paymentMethod String
   amount        Decimal
+  confirmedAt   DateTime? @map("confirmed_at")
 
   sale Sale @relation(fields: [saleId], references: [id], onDelete: Cascade)
 
@@ -729,6 +776,83 @@ model User {
   @@index([username])
   @@index([organizationId])
   @@map("users")
+}
+
+// ── Discounts & Extras ────────────────────────────────────────────────────────
+
+model Discount {
+  id             String    @id @default(cuid())
+  organizationId String    @map("organization_id")
+  name           String
+  description    String?
+  isActive       Boolean   @default(true)          @map("is_active")
+  discountType   String    @default("PERCENTAGE")   @map("discount_type")
+  value          Decimal   @default(0)
+  priority       Int       @default(0)
+  label          String?
+  dateFrom       DateTime? @map("date_from")        @db.Date
+  dateTo         DateTime? @map("date_to")          @db.Date
+  timeFrom       String?   @map("time_from")
+  timeTo         String?   @map("time_to")
+  weekdays       Json?
+  appliesTo      String    @default("ORDER")        @map("applies_to")
+  productIds     Json?     @map("product_ids")
+  categoryIds    Json?     @map("category_ids")
+  paymentMethods Json?     @map("payment_methods")
+  sortOrder      Int       @default(0)              @map("sort_order")
+  createdAt      DateTime  @default(now())          @map("created_at")
+  updatedAt      DateTime  @updatedAt               @map("updated_at")
+
+  organization Organization @relation(fields: [organizationId], references: [id])
+
+  @@index([organizationId, isActive])
+  @@map("discounts")
+}
+
+model Extra {
+  id             String    @id @default(cuid())
+  organizationId String    @map("organization_id")
+  name           String
+  description    String?
+  isActive       Boolean   @default(true)  @map("is_active")
+  price          Decimal   @default(0)
+  isFree         Boolean   @default(false) @map("is_free")
+  affectsStock   Boolean   @default(false) @map("affects_stock")
+  ingredientId   String?   @map("ingredient_id")
+  ingredientQty  Decimal?  @map("ingredient_qty")
+  appliesTo      String    @default("ALL") @map("applies_to")
+  productIds     Json?     @map("product_ids")
+  categoryIds    Json?     @map("category_ids")
+  maxQuantity    Int?      @map("max_quantity")
+  sortOrder      Int       @default(0)    @map("sort_order")
+  createdAt      DateTime  @default(now()) @map("created_at")
+  updatedAt      DateTime  @updatedAt      @map("updated_at")
+
+  organization Organization @relation(fields: [organizationId], references: [id])
+  ingredient   Ingredient?  @relation(fields: [ingredientId], references: [id])
+  saleExtras   SaleExtra[]
+
+  @@index([organizationId, isActive])
+  @@map("extras")
+}
+
+model SaleExtra {
+  id                   String   @id @default(cuid())
+  saleId               String   @map("sale_id")
+  extraId              String?  @map("extra_id")
+  quantity             Int      @default(1)
+  nameSnapshot         String   @map("name_snapshot")
+  priceSnapshot        Decimal  @map("price_snapshot")
+  isFreeSnapshot       Boolean  @default(false) @map("is_free_snapshot")
+  affectsStockSnapshot Boolean  @default(false) @map("affects_stock_snapshot")
+  ingredientId         String?  @map("ingredient_id")
+  ingredientQtySnapshot Decimal? @map("ingredient_qty_snapshot")
+
+  sale  Sale   @relation(fields: [saleId], references: [id], onDelete: Cascade)
+  extra Extra? @relation(fields: [extraId], references: [id])
+
+  @@index([saleId])
+  @@map("sale_extras")
 }
 
 // ── Schedules ─────────────────────────────────────────────────────────────────
