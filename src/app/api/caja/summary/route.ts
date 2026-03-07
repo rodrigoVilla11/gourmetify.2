@@ -1,3 +1,4 @@
+export const dynamic = "force-dynamic";
 import { NextRequest, NextResponse } from "next/server";
 import { buildCajaSummary } from "@/utils/cajaUtils";
 import { requireOrg } from "@/lib/requireOrg";
