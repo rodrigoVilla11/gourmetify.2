@@ -58,7 +58,6 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
               type: "PURCHASE",
               delta: ri.receivedQty,
               reason: `Recepción de pedido ${order.number}`,
-              refId: params.id,
             },
           });
         }

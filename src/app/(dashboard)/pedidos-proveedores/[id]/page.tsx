@@ -66,6 +66,15 @@ interface ReceiveRow {
   actualUnitCost: number;
 }
 
+interface InvoiceForm {
+  createInvoice: boolean;
+  invoiceNumber: string;
+  amount: string;
+  date: string;
+  dueDate: string;
+  notes: string;
+}
+
 const STATUS_LABELS: Record<string, string> = {
   DRAFT: "Borrador",
   SENT: "Enviado",
@@ -89,6 +98,17 @@ export default function PurchaseOrderDetailPage() {
   const [receiveRows, setReceiveRows] = useState<ReceiveRow[]>([]);
   const [receiving, setReceiving] = useState(false);
   const [receiveError, setReceiveError] = useState("");
+
+  // Invoice form state
+  const today = new Date().toISOString().slice(0, 10);
+  const [invoiceForm, setInvoiceForm] = useState<InvoiceForm>({
+    createInvoice: false,
+    invoiceNumber: "",
+    amount: "",
+    date: today,
+    dueDate: "",
+    notes: "",
+  });
 
   // Invoice upload state
   const [uploadingInvoice, setUploadingInvoice] = useState(false);
@@ -143,6 +163,7 @@ export default function PurchaseOrderDetailPage() {
   const handleReceive = async () => {
     setReceiveError("");
     setReceiving(true);
+
     const res = await fetch(`/api/purchase-orders/${params.id}/receive`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -150,6 +171,27 @@ export default function PurchaseOrderDetailPage() {
     });
     const json = await res.json();
     if (!res.ok) { setReceiveError(json.error ?? "Error al recibir"); setReceiving(false); return; }
+
+    // Create supplier invoice if requested
+    if (invoiceForm.createInvoice && order) {
+      const amount = parseFloat(invoiceForm.amount);
+      if (!isNaN(amount) && amount > 0) {
+        await fetch("/api/supplier-invoices", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            supplierId: order.supplier.id,
+            amount,
+            currency: "ARS",
+            date: invoiceForm.date || today,
+            dueDate: invoiceForm.dueDate || null,
+            invoiceNumber: invoiceForm.invoiceNumber || null,
+            notes: invoiceForm.notes || null,
+          }),
+        });
+      }
+    }
+
     setReceiving(false);
     fetchOrder();
   };
@@ -200,6 +242,9 @@ export default function PurchaseOrderDetailPage() {
   }
 
   const receiveActualTotal = receiveRows.reduce((s, r) => s + r.receivedQty * r.actualUnitCost, 0);
+
+  // Sync invoice amount with actual total when it changes (only if user hasn't overridden it)
+  const syncedAmount = receiveActualTotal.toFixed(2);
 
   return (
     <div className="max-w-5xl mx-auto space-y-6">
@@ -423,6 +468,79 @@ export default function PurchaseOrderDetailPage() {
           </div>
 
           {receiveError && <p className="px-5 py-3 text-sm text-red-600">{receiveError}</p>}
+
+          {/* Supplier invoice creation */}
+          <div className="px-5 py-4 border-t border-gray-100 space-y-4">
+            <label className="flex items-center gap-3 cursor-pointer">
+              <div
+                onClick={() => {
+                  setInvoiceForm((f) => ({
+                    ...f,
+                    createInvoice: !f.createInvoice,
+                    amount: !f.createInvoice ? syncedAmount : f.amount,
+                  }));
+                }}
+                className={`relative inline-flex h-5 w-9 items-center rounded-full transition-colors ${invoiceForm.createInvoice ? "bg-[#0f2f26]" : "bg-gray-200"}`}
+              >
+                <span className={`inline-block h-3.5 w-3.5 rounded-full bg-white shadow transition-transform ${invoiceForm.createInvoice ? "translate-x-4" : "translate-x-0.5"}`} />
+              </div>
+              <span className="text-sm font-medium text-gray-700">Registrar factura del proveedor al confirmar</span>
+            </label>
+
+            {invoiceForm.createInvoice && (
+              <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
+                <div className="space-y-1">
+                  <label className="text-xs font-medium text-gray-500 uppercase tracking-wide">N° Factura</label>
+                  <input
+                    type="text"
+                    placeholder="Ej: A-0001-00000123"
+                    value={invoiceForm.invoiceNumber}
+                    onChange={(e) => setInvoiceForm((f) => ({ ...f, invoiceNumber: e.target.value }))}
+                    className="w-full rounded-xl border border-gray-200 px-3 py-2 text-sm focus:border-[#0f2f26] focus:outline-none"
+                  />
+                </div>
+                <div className="space-y-1">
+                  <label className="text-xs font-medium text-gray-500 uppercase tracking-wide">Monto *</label>
+                  <input
+                    type="number"
+                    min="0"
+                    step="0.01"
+                    value={invoiceForm.amount}
+                    onChange={(e) => setInvoiceForm((f) => ({ ...f, amount: e.target.value }))}
+                    className="w-full rounded-xl border border-gray-200 px-3 py-2 text-sm focus:border-[#0f2f26] focus:outline-none"
+                  />
+                </div>
+                <div className="space-y-1">
+                  <label className="text-xs font-medium text-gray-500 uppercase tracking-wide">Fecha</label>
+                  <input
+                    type="date"
+                    value={invoiceForm.date}
+                    onChange={(e) => setInvoiceForm((f) => ({ ...f, date: e.target.value }))}
+                    className="w-full rounded-xl border border-gray-200 px-3 py-2 text-sm focus:border-[#0f2f26] focus:outline-none"
+                  />
+                </div>
+                <div className="space-y-1">
+                  <label className="text-xs font-medium text-gray-500 uppercase tracking-wide">Vencimiento</label>
+                  <input
+                    type="date"
+                    value={invoiceForm.dueDate}
+                    onChange={(e) => setInvoiceForm((f) => ({ ...f, dueDate: e.target.value }))}
+                    className="w-full rounded-xl border border-gray-200 px-3 py-2 text-sm focus:border-[#0f2f26] focus:outline-none"
+                  />
+                </div>
+                <div className="col-span-2 space-y-1">
+                  <label className="text-xs font-medium text-gray-500 uppercase tracking-wide">Notas</label>
+                  <input
+                    type="text"
+                    placeholder="Opcional"
+                    value={invoiceForm.notes}
+                    onChange={(e) => setInvoiceForm((f) => ({ ...f, notes: e.target.value }))}
+                    className="w-full rounded-xl border border-gray-200 px-3 py-2 text-sm focus:border-[#0f2f26] focus:outline-none"
+                  />
+                </div>
+              </div>
+            )}
+          </div>
 
           {/* Invoice upload for SENT */}
           <div className="px-5 py-4 border-t border-gray-100 space-y-3">
