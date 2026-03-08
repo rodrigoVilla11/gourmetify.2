@@ -21,7 +21,8 @@
       "Bash(npx tsc:*)",
       "Bash(npm install:*)",
       "Bash(wc:*)",
-      "Bash(cat:*)"
+      "Bash(cat:*)",
+      "Bash(find C:\\\\Users\\\\villa\\\\Projects\\\\stockquickly\\\\src\\\\app\\\\\\(dashboard\\):*)"
     ]
   }
 }

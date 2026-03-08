@@ -10,6 +10,7 @@ import { unitLabel, compatibleUnits, convertUnit } from "@/utils/units";
 import { formatCurrency } from "@/utils/currency";
 import { ImportButton } from "@/components/ui/ImportButton";
 import { downloadExcel } from "@/utils/excel";
+import HelpButton from "@/components/tutorial/HelpButton";
 
 interface ProductCategory { id: string; name: string; color: string; _count?: { products: number } }
 interface Ingredient { id: string; name: string; unit: Unit; costPerUnit: string }
@@ -376,10 +377,11 @@ export default function ProductsPage() {
   return (
     <div className="space-y-5">
       {/* Header */}
-      <div className="flex flex-wrap items-start justify-between gap-4">
+      <div className="flex flex-wrap items-start justify-between gap-4" data-tour="products-header">
         <div>
           <h1 className="text-2xl font-bold text-gray-900 tracking-tight">Productos</h1>
           <p className="text-sm text-gray-500 mt-0.5">Menú y recetas del negocio</p>
+          <HelpButton tutorialSlug="productos" className="mt-1" />
         </div>
         <div className="flex items-center gap-2 flex-wrap">
           <SecondaryBtn onClick={() => downloadExcel("/api/products?format=xlsx", "productos.xlsx")}>
@@ -388,12 +390,14 @@ export default function ProductsPage() {
             </svg>
             Exportar
           </SecondaryBtn>
+          <span data-tour="products-import">
           <ImportButton
             endpoint="/api/products/import"
             templateHeaders={["Nombre", "SKU", "Precio de Venta", "Moneda"]}
             templateExampleRow={["Pizza Mozzarella", "PIZ-001", 2500, "ARS"]}
             onSuccess={fetchData}
           />
+          </span>
           <SecondaryBtn onClick={openCreateCat}>
             <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
               <path strokeLinecap="round" strokeLinejoin="round" d="M9.568 3H5.25A2.25 2.25 0 003 5.25v4.318c0 .597.237 1.17.659 1.591l9.581 9.581c.699.699 1.78.872 2.607.33a18.095 18.095 0 005.223-5.223c.542-.827.369-1.908-.33-2.607L11.16 3.66A2.25 2.25 0 009.568 3z" />
@@ -401,12 +405,12 @@ export default function ProductsPage() {
             </svg>
             Categorías
           </SecondaryBtn>
-          <PrimaryBtn onClick={openCreate}>
+          <span data-tour="new-product-btn"><PrimaryBtn onClick={openCreate}>
             <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
               <path strokeLinecap="round" strokeLinejoin="round" d="M12 4.5v15m7.5-7.5h-15" />
             </svg>
             Nuevo producto
-          </PrimaryBtn>
+          </PrimaryBtn></span>
         </div>
       </div>
 
@@ -448,7 +452,7 @@ export default function ProductsPage() {
       </div>
 
       {/* Filter bar */}
-      <div className="bg-white rounded-2xl border border-gray-200 shadow-sm p-4 flex flex-wrap gap-3 items-center">
+      <div className="bg-white rounded-2xl border border-gray-200 shadow-sm p-4 flex flex-wrap gap-3 items-center" data-tour="products-filter">
         <div className="relative flex-1 min-w-48">
           <svg className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400 pointer-events-none" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
             <path strokeLinecap="round" strokeLinejoin="round" d="M21 21l-5.197-5.197m0 0A7.5 7.5 0 105.196 5.196a7.5 7.5 0 0010.607 10.607z" />
@@ -511,7 +515,7 @@ export default function ProductsPage() {
       </div>
 
       {/* Table */}
-      <div className="bg-white rounded-2xl border border-gray-200 shadow-sm overflow-hidden">
+      <div className="bg-white rounded-2xl border border-gray-200 shadow-sm overflow-hidden" data-tour="products-table">
         {loading ? (
           <div className="flex items-center justify-center py-16">
             <div className="flex items-center gap-3 text-gray-400">
@@ -818,39 +822,58 @@ export default function ProductsPage() {
             ) : (
               <div className="space-y-2">
                 {fields.map((field, index) => {
-                  const selIngId = watchedIngredients[index]?.ingredientId;
-                  const selIng = ingredients.find((i) => i.id === selIngId);
+                  const bom = watchedIngredients[index];
+                  const selIng = ingredients.find((i) => i.id === bom?.ingredientId);
                   const availableUnits = selIng ? compatibleUnits(selIng.unit) : UNITS;
+                  const rowCost = (() => {
+                    if (!selIng || !bom?.qty || bom.qty <= 0) return null;
+                    try {
+                      const effectiveQty = bom.qty * (1 + (bom.wastagePct || 0) / 100);
+                      return Number(selIng.costPerUnit) * convertUnit(effectiveQty, bom.unit, selIng.unit);
+                    } catch { return null; }
+                  })();
                   return (
-                    <div key={field.id} className="grid grid-cols-12 gap-2 items-end p-3 bg-gray-50 rounded-xl border border-gray-100">
-                      <div className="col-span-4">
-                        <Select
-                          label="Ingrediente"
-                          {...register(`ingredients.${index}.ingredientId`, {
-                            required: true,
-                            onChange: (e) => {
-                              const ing = ingredients.find((i) => i.id === e.target.value);
-                              if (ing) setValue(`ingredients.${index}.unit`, ing.unit);
-                            },
-                          })}
-                        >
-                          <option value="">Seleccionar...</option>
-                          {ingredients.map((i) => <option key={i.id} value={i.id}>{i.name}</option>)}
-                        </Select>
+                    <div key={field.id} className="p-3 bg-gray-50 rounded-xl border border-gray-100 space-y-2">
+                      <div className="grid grid-cols-12 gap-2 items-end">
+                        <div className="col-span-4">
+                          <Select
+                            label="Ingrediente"
+                            {...register(`ingredients.${index}.ingredientId`, {
+                              required: true,
+                              onChange: (e) => {
+                                const ing = ingredients.find((i) => i.id === e.target.value);
+                                if (ing) setValue(`ingredients.${index}.unit`, ing.unit);
+                              },
+                            })}
+                          >
+                            <option value="">Seleccionar...</option>
+                            {ingredients.map((i) => <option key={i.id} value={i.id}>{i.name}</option>)}
+                          </Select>
+                        </div>
+                        <div className="col-span-2">
+                          <Input label="Cant." type="number" step="0.001" {...register(`ingredients.${index}.qty`, { valueAsNumber: true, min: 0.001 })} />
+                        </div>
+                        <div className="col-span-2">
+                          <Select label="Unidad" {...register(`ingredients.${index}.unit`)}>
+                            {availableUnits.map((u) => <option key={u} value={u}>{u}</option>)}
+                          </Select>
+                        </div>
+                        <div className="col-span-3">
+                          <Input label="Merma %" type="number" step="0.1" min="0" max="100" {...register(`ingredients.${index}.wastagePct`, { valueAsNumber: true })} />
+                        </div>
+                        <div className="col-span-1 flex justify-center pb-1">
+                          <RemoveBtn onClick={() => remove(index)} />
+                        </div>
                       </div>
-                      <div className="col-span-2">
-                        <Input label="Cant." type="number" step="0.001" {...register(`ingredients.${index}.qty`, { valueAsNumber: true, min: 0.001 })} />
-                      </div>
-                      <div className="col-span-2">
-                        <Select label="Unidad" {...register(`ingredients.${index}.unit`)}>
-                          {availableUnits.map((u) => <option key={u} value={u}>{u}</option>)}
-                        </Select>
-                      </div>
-                      <div className="col-span-3">
-                        <Input label="Merma %" type="number" step="0.1" min="0" max="100" {...register(`ingredients.${index}.wastagePct`, { valueAsNumber: true })} />
-                      </div>
-                      <div className="col-span-1 flex justify-center pb-1">
-                        <RemoveBtn onClick={() => remove(index)} />
+                      <div className="flex justify-end pr-8">
+                        {rowCost !== null ? (
+                          <span className="text-xs text-gray-500">
+                            Costo:{" "}
+                            <span className="font-semibold text-gray-700">{formatCurrency(rowCost, "ARS")}</span>
+                          </span>
+                        ) : (
+                          <span className="text-xs text-gray-300">Costo: —</span>
+                        )}
                       </div>
                     </div>
                   );
@@ -875,39 +898,58 @@ export default function ProductsPage() {
               ) : (
                 <div className="space-y-2">
                   {prepFields.map((field, index) => {
-                    const selPrepId = watchedPreparations[index]?.preparationId;
-                    const selPrep = preparations.find((p) => p.id === selPrepId);
+                    const bom = watchedPreparations[index];
+                    const selPrep = preparations.find((p) => p.id === bom?.preparationId);
                     const availableUnits = selPrep ? compatibleUnits(selPrep.unit) : UNITS;
+                    const rowCost = (() => {
+                      if (!selPrep || !bom?.qty || bom.qty <= 0) return null;
+                      try {
+                        const effectiveQty = bom.qty * (1 + (bom.wastagePct || 0) / 100);
+                        return Number(selPrep.costPrice) * convertUnit(effectiveQty, bom.unit, selPrep.unit);
+                      } catch { return null; }
+                    })();
                     return (
-                      <div key={field.id} className="grid grid-cols-12 gap-2 items-end p-3 bg-emerald-50/50 rounded-xl border border-emerald-100">
-                        <div className="col-span-4">
-                          <Select
-                            label="Preparación"
-                            {...register(`preparations.${index}.preparationId`, {
-                              required: true,
-                              onChange: (e) => {
-                                const prep = preparations.find((p) => p.id === e.target.value);
-                                if (prep) setValue(`preparations.${index}.unit`, prep.unit);
-                              },
-                            })}
-                          >
-                            <option value="">Seleccionar...</option>
-                            {preparations.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
-                          </Select>
+                      <div key={field.id} className="p-3 bg-emerald-50/50 rounded-xl border border-emerald-100 space-y-2">
+                        <div className="grid grid-cols-12 gap-2 items-end">
+                          <div className="col-span-4">
+                            <Select
+                              label="Preparación"
+                              {...register(`preparations.${index}.preparationId`, {
+                                required: true,
+                                onChange: (e) => {
+                                  const prep = preparations.find((p) => p.id === e.target.value);
+                                  if (prep) setValue(`preparations.${index}.unit`, prep.unit);
+                                },
+                              })}
+                            >
+                              <option value="">Seleccionar...</option>
+                              {preparations.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
+                            </Select>
+                          </div>
+                          <div className="col-span-2">
+                            <Input label="Cant." type="number" step="0.001" {...register(`preparations.${index}.qty`, { valueAsNumber: true, min: 0.001 })} />
+                          </div>
+                          <div className="col-span-2">
+                            <Select label="Unidad" {...register(`preparations.${index}.unit`)}>
+                              {availableUnits.map((u) => <option key={u} value={u}>{u}</option>)}
+                            </Select>
+                          </div>
+                          <div className="col-span-3">
+                            <Input label="Merma %" type="number" step="0.1" min="0" max="100" {...register(`preparations.${index}.wastagePct`, { valueAsNumber: true })} />
+                          </div>
+                          <div className="col-span-1 flex justify-center pb-1">
+                            <RemoveBtn onClick={() => removePrep(index)} />
+                          </div>
                         </div>
-                        <div className="col-span-2">
-                          <Input label="Cant." type="number" step="0.001" {...register(`preparations.${index}.qty`, { valueAsNumber: true, min: 0.001 })} />
-                        </div>
-                        <div className="col-span-2">
-                          <Select label="Unidad" {...register(`preparations.${index}.unit`)}>
-                            {availableUnits.map((u) => <option key={u} value={u}>{u}</option>)}
-                          </Select>
-                        </div>
-                        <div className="col-span-3">
-                          <Input label="Merma %" type="number" step="0.1" min="0" max="100" {...register(`preparations.${index}.wastagePct`, { valueAsNumber: true })} />
-                        </div>
-                        <div className="col-span-1 flex justify-center pb-1">
-                          <RemoveBtn onClick={() => removePrep(index)} />
+                        <div className="flex justify-end pr-8">
+                          {rowCost !== null ? (
+                            <span className="text-xs text-gray-500">
+                              Costo:{" "}
+                              <span className="font-semibold text-emerald-700">{formatCurrency(rowCost, "ARS")}</span>
+                            </span>
+                          ) : (
+                            <span className="text-xs text-gray-300">Costo: —</span>
+                          )}
                         </div>
                       </div>
                     );

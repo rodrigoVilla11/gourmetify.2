@@ -2,6 +2,14 @@
 @tailwind components;
 @tailwind utilities;
 
+/* ── Tutorial tour highlight ────────────────────────────────────────────────── */
+[data-tour-active="true"] {
+  position: relative;
+  z-index: 1000 !important;
+  border-radius: 0.5rem;
+  outline: none;
+}
+
 /* ── Print styles ──────────────────────────────────────────────────────────── */
 @media print {
   .no-print { display: none !important; }

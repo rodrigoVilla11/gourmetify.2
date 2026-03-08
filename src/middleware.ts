@@ -41,6 +41,22 @@ export async function middleware(req: NextRequest) {
     return NextResponse.next();
   }
 
+  // Landing page at "/" is public; authenticated users go to /dashboard
+  if (pathname === "/") {
+    const token = req.cookies.get(COOKIE_NAME)?.value;
+    if (token) {
+      try {
+        const { payload } = await jwtVerify(token, SECRET);
+        const role = (payload as { role: string }).role;
+        if (role === "SUPERADMIN") return NextResponse.redirect(new URL("/admin/organizations", req.url));
+        if (role === "CAJERA") return NextResponse.redirect(new URL("/comandas", req.url));
+        if (role === "EMPLEADO") return NextResponse.redirect(new URL("/fichador", req.url));
+        return NextResponse.redirect(new URL("/dashboard", req.url));
+      } catch { /* invalid token — show landing */ }
+    }
+    return NextResponse.next();
+  }
+
   const token = req.cookies.get(COOKIE_NAME)?.value;
   const isApiRoute = pathname.startsWith("/api/");
 

@@ -11,6 +11,7 @@ import { formatCurrency } from "@/utils/currency";
 import { ImportButton } from "@/components/ui/ImportButton";
 import { downloadExcel } from "@/utils/excel";
 import { MovementPanel } from "@/components/ingredients/MovementPanel";
+import HelpButton from "@/components/tutorial/HelpButton";
 
 interface Supplier { id: string; name: string }
 interface Ingredient {
@@ -160,18 +161,21 @@ export default function IngredientsPage() {
   return (
     <div className="space-y-5">
       {/* Header */}
-      <div className="flex flex-wrap items-start justify-between gap-4">
+      <div className="flex flex-wrap items-start justify-between gap-4" data-tour="ingredients-header">
         <div>
           <h1 className="text-2xl font-bold text-gray-900 tracking-tight">Ingredientes</h1>
           <p className="text-sm text-gray-500 mt-0.5">{visible.length} resultado{visible.length !== 1 ? "s" : ""}</p>
+          <HelpButton tutorialSlug="ingredientes" className="mt-1" />
         </div>
         <div className="flex flex-wrap gap-2 items-center">
+          <span data-tour="ingredients-import">
           <ImportButton
             endpoint="/api/ingredients/import"
             templateHeaders={["Nombre", "Unidad", "Stock Actual", "Stock Mínimo", "Costo/Unidad", "Moneda", "Proveedor"]}
             templateExampleRow={["Harina", "KG", 50, 10, 1500, "ARS", "Proveedor ABC"]}
             onSuccess={fetchData}
           />
+          </span>
           <button
             onClick={() => downloadExcel("/api/ingredients?format=xlsx", "ingredientes.xlsx")}
             className="inline-flex items-center gap-1.5 px-3 py-2 rounded-xl border border-gray-200 bg-white text-sm font-medium text-gray-700 hover:bg-gray-50 transition-colors shadow-sm"
@@ -182,6 +186,7 @@ export default function IngredientsPage() {
             Exportar
           </button>
           <button
+            data-tour="new-ingredient-btn"
             onClick={openCreate}
             className="inline-flex items-center gap-1.5 px-4 py-2 rounded-xl text-sm font-semibold text-white transition-colors shadow-sm"
             style={{ backgroundColor: "#0f2f26" }}
@@ -237,7 +242,7 @@ export default function IngredientsPage() {
       </div>
 
       {/* Filter bar */}
-      <div className="bg-white rounded-2xl border border-gray-200 shadow-sm p-4 space-y-3">
+      <div className="bg-white rounded-2xl border border-gray-200 shadow-sm p-4 space-y-3" data-tour="ingredients-filters">
         <div className="relative">
           <svg className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400 pointer-events-none" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
             <path strokeLinecap="round" strokeLinejoin="round" d="M21 21l-5.197-5.197m0 0A7.5 7.5 0 105.196 5.196a7.5 7.5 0 0010.607 10.607z" />
@@ -321,7 +326,7 @@ export default function IngredientsPage() {
       </div>
 
       {/* Table */}
-      <div className="bg-white rounded-2xl border border-gray-200 shadow-sm overflow-hidden">
+      <div className="bg-white rounded-2xl border border-gray-200 shadow-sm overflow-hidden" data-tour="ingredients-table">
         {loading ? (
           <div className="flex items-center justify-center py-16">
             <div className="flex items-center gap-3 text-gray-400">
