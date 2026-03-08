@@ -6,6 +6,13 @@ import { requireOrg } from "@/lib/requireOrg";
 
 const DOW_LABELS = ["Dom", "Lun", "Mar", "Mié", "Jue", "Vie", "Sáb"];
 
+// Use payment sum as ground truth (handles pre-fix records where sale.total
+// was not updated when discount was applied at cobrar time)
+const saleRevenue = (s: { total: { toNumber?(): number } | string | number; payments: { amount: { toNumber?(): number } | string | number }[] }): number => {
+  const sum = s.payments.reduce((acc, p) => acc + Number(p.amount), 0);
+  return sum > 0 ? sum : Number(s.total);
+};
+
 export async function GET(req: NextRequest) {  let orgId: string;
   try { orgId = requireOrg(req); } catch (e) { return e as Response; }
 
@@ -40,13 +47,6 @@ export async function GET(req: NextRequest) {  let orgId: string;
       },
       orderBy: { date: "asc" },
     });
-
-    // Use payment sum as ground truth (handles pre-fix records where sale.total
-    // was not updated when discount was applied at cobrar time)
-    function saleRevenue(s: { total: string | number; payments: { amount: string | number }[] }): number {
-      const sum = s.payments.reduce((acc, p) => acc + Number(p.amount), 0);
-      return sum > 0 ? sum : Number(s.total);
-    }
 
     // ── Summary ───────────────────────────────────────────────────────────────
     const totalCount = sales.length;

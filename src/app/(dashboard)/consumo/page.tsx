@@ -306,9 +306,6 @@ interface TableRow {
   estimatedCostFormatted: string | null;
 }
 
-type SortCol = "name" | "consumed" | "cost";
-type SortDir = "asc" | "desc";
-
 function ConsumoTable({ title, accentColor, barColor, totalCost, loading, emptyMessage, rows }: {
   title: string;
   accentColor: string;

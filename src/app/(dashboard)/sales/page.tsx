@@ -284,7 +284,7 @@ export default function SalesPage() {
                 />
                 <YAxis hide />
                 <Tooltip
-                  formatter={(v: number) => [fmt(v), "Ingresos"]}
+                  formatter={(v: number | undefined) => [fmt(v ?? 0), "Ingresos"]}
                   labelFormatter={(l) => format(new Date(l + "T12:00:00"), "EEEE dd/MM", { locale: es })}
                   contentStyle={{ fontSize: 12, borderRadius: 8, border: "1px solid #e5e7eb", boxShadow: "0 2px 8px rgba(0,0,0,0.06)" }}
                 />
@@ -374,7 +374,7 @@ export default function SalesPage() {
                     />
                     <YAxis hide />
                     <Tooltip
-                      formatter={(v: number) => [v, "Pedidos"]}
+                      formatter={(v: number | undefined) => [v ?? 0, "Pedidos"]}
                       labelFormatter={(l) => `${l}:00 hs`}
                       contentStyle={{ fontSize: 12, borderRadius: 8, border: "1px solid #e5e7eb", boxShadow: "0 2px 8px rgba(0,0,0,0.06)" }}
                     />
@@ -398,7 +398,7 @@ export default function SalesPage() {
                     />
                     <YAxis hide />
                     <Tooltip
-                      formatter={(v: number) => [v, "Pedidos"]}
+                      formatter={(v: number | undefined) => [v ?? 0, "Pedidos"]}
                       contentStyle={{ fontSize: 12, borderRadius: 8, border: "1px solid #e5e7eb", boxShadow: "0 2px 8px rgba(0,0,0,0.06)" }}
                     />
                     <Bar dataKey="count" fill="#f59e0b" radius={[3, 3, 0, 0]} />
