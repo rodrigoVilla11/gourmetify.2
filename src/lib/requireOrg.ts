@@ -18,6 +18,21 @@ export function requireOrg(req: NextRequest): string {
   return orgId;
 }
 
+/**
+ * Checks that the calling user's role is in the allowed list.
+ * Middleware forwards the JWT role via x-user-role header.
+ * Throws a 403 NextResponse if the role is not allowed.
+ */
+export function requireRole(req: NextRequest, allowedRoles: string[]): void {
+  const role = req.headers.get("x-user-role");
+  if (!role || !allowedRoles.includes(role)) {
+    throw NextResponse.json(
+      { error: "Acceso denegado para tu rol", code: "FORBIDDEN" },
+      { status: 403 }
+    );
+  }
+}
+
 /** Reads x-org-plan from header, returns effective plan. */
 export function getOrgPlan(req: NextRequest): Plan {
   return (req.headers.get("x-org-plan") ?? "FREE") as Plan;

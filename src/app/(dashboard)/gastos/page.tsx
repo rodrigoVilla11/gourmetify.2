@@ -45,6 +45,7 @@ export default function GastosPage() {
   const [catName, setCatName] = useState("");
   const [catColor, setCatColor] = useState("#6B7280");
   const [catSaving, setCatSaving] = useState(false);
+  const [catError, setCatError] = useState("");
   const [deletingCatId, setDeletingCatId] = useState<string | null>(null);
   const [isDeletingCat, setIsDeletingCat] = useState(false);
 
@@ -100,6 +101,7 @@ export default function GastosPage() {
     setEditingCat(null);
     setCatName("");
     setCatColor("#6B7280");
+    setCatError("");
     setCatModal(true);
   };
 
@@ -107,27 +109,35 @@ export default function GastosPage() {
     setEditingCat(cat);
     setCatName(cat.name);
     setCatColor(cat.color);
+    setCatError("");
     setCatModal(true);
   };
 
   const saveCat = async () => {
     if (!catName.trim()) return;
     setCatSaving(true);
+    setCatError("");
     const body = { name: catName.trim(), color: catColor };
+    let res: Response;
     if (editingCat) {
-      await fetch(`/api/expense-categories/${editingCat.id}`, {
+      res = await fetch(`/api/expense-categories/${editingCat.id}`, {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(body),
       });
     } else {
-      await fetch("/api/expense-categories", {
+      res = await fetch("/api/expense-categories", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(body),
       });
     }
     setCatSaving(false);
+    if (!res.ok) {
+      const d = await res.json().catch(() => ({}));
+      setCatError(d.error ?? "Error al guardar la categoría");
+      return;
+    }
     setCatModal(false);
     fetchCategories();
   };
@@ -135,9 +145,13 @@ export default function GastosPage() {
   const deleteCat = async () => {
     if (!deletingCatId) return;
     setIsDeletingCat(true);
-    await fetch(`/api/expense-categories/${deletingCatId}`, { method: "DELETE" });
-    setDeletingCatId(null);
+    const res = await fetch(`/api/expense-categories/${deletingCatId}`, { method: "DELETE" });
     setIsDeletingCat(false);
+    if (!res.ok) {
+      setDeletingCatId(null);
+      return;
+    }
+    setDeletingCatId(null);
     fetchCategories();
   };
 
@@ -186,18 +200,21 @@ export default function GastosPage() {
       date: expDate || undefined,
     };
     try {
-      if (editingExp) {
-        await fetch(`/api/expenses/${editingExp.id}`, {
-          method: "PUT",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(body),
-        });
-      } else {
-        await fetch("/api/expenses", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(body),
-        });
+      const res = editingExp
+        ? await fetch(`/api/expenses/${editingExp.id}`, {
+            method: "PUT",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(body),
+          })
+        : await fetch("/api/expenses", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(body),
+          });
+      if (!res.ok) {
+        const d = await res.json().catch(() => ({}));
+        setExpError(d.error ?? "Error al guardar gasto");
+        return;
       }
       setExpModal(false);
       fetchExpenses();
@@ -211,9 +228,13 @@ export default function GastosPage() {
   const deleteExp = async () => {
     if (!deletingExpId) return;
     setIsDeletingExp(true);
-    await fetch(`/api/expenses/${deletingExpId}`, { method: "DELETE" });
-    setDeletingExpId(null);
+    const res = await fetch(`/api/expenses/${deletingExpId}`, { method: "DELETE" });
     setIsDeletingExp(false);
+    if (!res.ok) {
+      setDeletingExpId(null);
+      return;
+    }
+    setDeletingExpId(null);
     fetchExpenses();
   };
 
@@ -491,6 +512,7 @@ export default function GastosPage() {
         title={editingCat ? "Editar Categoría" : "Nueva Categoría"}
       >
         <div className="space-y-4">
+          {catError && <Alert variant="error">{catError}</Alert>}
           <Input
             label="Nombre *"
             value={catName}

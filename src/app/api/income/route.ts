@@ -60,7 +60,7 @@ export async function POST(req: NextRequest) {  let orgId: string;
       },
     });
 
-    revalidateTag("dashboard");
+    revalidateTag(`dashboard:${orgId}`);
     return NextResponse.json(entry, { status: 201 });
   } catch (e) {
     if (e instanceof ZodError) {

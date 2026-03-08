@@ -108,7 +108,7 @@ export async function buildCajaSummary(from: Date, to: Date, openingBalance?: nu
   const [salePayments, incomeEntries, allExpenses, saleTotals, supplierPayments, openSessions] =
     await Promise.all([
       prisma.salePayment.findMany({
-        where: { sale: { ...(orgId ? { organizationId: orgId } : {}), date: dateFilter, orderStatus: "ENTREGADO" } },
+        where: { sale: { ...(orgId ? { organizationId: orgId } : {}), date: dateFilter, isPaid: true } },
         select: { paymentMethod: true, amount: true },
       }),
       prisma.incomeEntry.findMany({

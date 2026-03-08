@@ -3,7 +3,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { UpdateDiscountSchema } from "@/lib/validators";
 import { ZodError } from "zod";
-import { requireOrg } from "@/lib/requireOrg";
+import { requireOrg, requireRole } from "@/lib/requireOrg";
 
 type Params = { params: { id: string } };
 
@@ -18,6 +18,7 @@ export async function GET(req: NextRequest, { params }: Params) {
 export async function PUT(req: NextRequest, { params }: Params) {
   let orgId: string;
   try { orgId = requireOrg(req); } catch (e) { return e as Response; }
+  try { requireRole(req, ["ADMIN", "ENCARGADO"]); } catch (e) { return e as Response; }
   try {
     const body = await req.json();
     const data = UpdateDiscountSchema.parse(body);
@@ -54,6 +55,7 @@ export async function PUT(req: NextRequest, { params }: Params) {
 export async function DELETE(req: NextRequest, { params }: Params) {
   let orgId: string;
   try { orgId = requireOrg(req); } catch (e) { return e as Response; }
+  try { requireRole(req, ["ADMIN", "ENCARGADO"]); } catch (e) { return e as Response; }
   const result = await prisma.discount.deleteMany({ where: { id: params.id, organizationId: orgId } });
   if (result.count === 0) return NextResponse.json({ error: "No encontrado" }, { status: 404 });
   return NextResponse.json({ ok: true });

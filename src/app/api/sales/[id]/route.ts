@@ -70,13 +70,20 @@ export async function PATCH(req: NextRequest, { params }: Params) {
         ([comboId, quantity]) => ({ comboId, quantity })
       );
 
-      // Load prices
+      // Load prices — also validates that all product/combo IDs belong to this org
       const [prods, combos] = await Promise.all([
         mergedItems.length > 0 ? prisma.product.findMany({ where: { id: { in: mergedItems.map(i => i.productId) }, organizationId: orgId }, select: { id: true, salePrice: true } }) : [],
         mergedCombos.length > 0 ? prisma.combo.findMany({ where: { id: { in: mergedCombos.map(c => c.comboId) }, organizationId: orgId }, select: { id: true, salePrice: true } }) : [],
       ]);
       const pPrices = new Map(prods.map(p => [p.id, Number(p.salePrice)]));
       const cPrices = new Map(combos.map(c => [c.id, Number(c.salePrice)]));
+
+      // Reject if any product/combo ID doesn't belong to this org
+      const missingProducts = mergedItems.filter(i => !pPrices.has(i.productId));
+      const missingCombos   = mergedCombos.filter(c => !cPrices.has(c.comboId));
+      if (missingProducts.length > 0 || missingCombos.length > 0) {
+        return NextResponse.json({ error: "Productos o combos no encontrados en esta organización", code: "NOT_FOUND" }, { status: 404 });
+      }
 
       const newTotal =
         mergedItems.reduce((s, i) => s + (pPrices.get(i.productId) ?? 0) * i.quantity, 0) +
@@ -110,7 +117,7 @@ export async function PATCH(req: NextRequest, { params }: Params) {
           saleData.isPaid = pmts.reduce((s, p) => s + p.amount, 0) >= newTotal - 0.01;
         }
 
-        await tx.sale.update({ where: { id: params.id }, data: saleData });
+        await tx.sale.update({ where: { id: params.id, organizationId: orgId }, data: saleData });
       }, { timeout: 30000 });
       return NextResponse.json({ id: params.id, total: newTotal });
     }

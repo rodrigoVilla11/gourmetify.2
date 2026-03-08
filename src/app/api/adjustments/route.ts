@@ -4,10 +4,11 @@ import { revalidateTag } from "next/cache";
 import { prisma } from "@/lib/prisma";
 import { CreateAdjustmentSchema } from "@/lib/validators";
 import { ZodError } from "zod";
-import { requireOrg } from "@/lib/requireOrg";
+import { requireOrg, requireRole } from "@/lib/requireOrg";
 
 export async function POST(req: NextRequest) {  let orgId: string;
   try { orgId = requireOrg(req); } catch (e) { return e as Response; }
+  try { requireRole(req, ["ADMIN", "ENCARGADO"]); } catch (e) { return e as Response; }
 
   try {
     const body = await req.json();

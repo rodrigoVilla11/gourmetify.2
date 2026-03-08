@@ -77,7 +77,7 @@ export async function middleware(req: NextRequest) {
     return NextResponse.next();
   }
 
-  // ── All other roles: forward organizationId + plan as headers
+  // ── All other roles: forward organizationId + plan + role as headers
   const requestHeaders = new Headers(req.headers);
   if (organizationId) {
     requestHeaders.set("x-organization-id", organizationId);
@@ -87,32 +87,28 @@ export async function middleware(req: NextRequest) {
   const expiresAt = session.planExpiresAt;
   const effectivePlan = !expiresAt || new Date() < new Date(expiresAt) ? rawPlan : "FREE";
   requestHeaders.set("x-org-plan", effectivePlan);
+  // Forward role so API routes can enforce RBAC without re-reading the JWT
+  requestHeaders.set("x-user-role", role);
 
   // ── ADMIN: full access within their org ───────────────────────────────────
   if (role === "ADMIN") {
     return NextResponse.next({ request: { headers: requestHeaders } });
   }
 
-  // Pages restricted to ADMIN only
-  const ADMIN_ONLY_PREFIXES = ["/resultados", "/caja"];
-  if (ADMIN_ONLY_PREFIXES.some((p) => pathname === p || pathname.startsWith(p + "/"))) {
-    if (isApiRoute) {
-      return NextResponse.json({ error: "Acceso denegado", code: "FORBIDDEN" }, { status: 403 });
-    }
-    return NextResponse.redirect(new URL("/", req.url));
-  }
-
-  // ── ENCARGADO: full access except ADMIN-only pages ────────────────────────
+  // ── ENCARGADO: full access (manager — sees financial/analytics pages) ──────
+  // Must come BEFORE any prefix blocking so ENCARGADO is not locked out of
+  // /resultados, /gastos, /analytics, /caja that they legitimately need.
   if (role === "ENCARGADO") {
     return NextResponse.next({ request: { headers: requestHeaders } });
   }
 
-  // API routes: skip page-level role restrictions
+  // API routes for CAJERA/EMPLEADO: pass through — each API enforces its own RBAC
   if (isApiRoute) {
     return NextResponse.next({ request: { headers: requestHeaders } });
   }
 
   // ── CAJERA: allow only specific page prefixes ──────────────────────────────
+  // /gastos, /analytics, /resultados, /caja are implicitly blocked (not in list)
   if (role === "CAJERA") {
     const allowed = CAJERA_PAGE_PREFIXES.some((p) => pathname.startsWith(p));
     if (!allowed) {

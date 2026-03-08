@@ -254,17 +254,7 @@ export async function POST(req: NextRequest) {
     const finalTotal = Math.round(pricing.total * 100) / 100;
     const adjAmount = paymentAdjustmentAmount ?? 0;
 
-    // ── Step 3: Compute daily order number ────────────────────────────────────
-    const dayStart = new Date();
-    dayStart.setHours(0, 0, 0, 0);
-    const dayEnd = new Date();
-    dayEnd.setHours(23, 59, 59, 999);
-    const todayCount = await prisma.sale.count({
-      where: { organizationId: orgId, createdAt: { gte: dayStart, lte: dayEnd } },
-    });
-    const dailyOrderNumber = todayCount + 1;
-
-    // ── Step 4: Create sale (NO stock deduction — happens on ENTREGADO) ───────
+    // ── Step 3 + 4: Atomically compute daily order number and create sale ─────
     const discountSnapshot = pricing.appliedDiscount ? {
       discountId:    pricing.appliedDiscount.id,
       name:          pricing.appliedDiscount.name,
@@ -274,7 +264,17 @@ export async function POST(req: NextRequest) {
       amountApplied: pricing.discountAmount,
     } : null;
 
-    const sale = await prisma.sale.create({
+    const sale = await prisma.$transaction(async (tx) => {
+      const dayStart = new Date();
+      dayStart.setHours(0, 0, 0, 0);
+      const dayEnd = new Date();
+      dayEnd.setHours(23, 59, 59, 999);
+      const todayCount = await tx.sale.count({
+        where: { organizationId: orgId, createdAt: { gte: dayStart, lte: dayEnd } },
+      });
+      const dailyOrderNumber = todayCount + 1;
+
+      return tx.sale.create({
       data: {
         date: date ? new Date(date) : new Date(),
         notes,
@@ -348,6 +348,7 @@ export async function POST(req: NextRequest) {
             }
           : {}),
       },
+      });
     });
 
     revalidateTag(`dashboard:${orgId}`);

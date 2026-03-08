@@ -13,6 +13,8 @@ type ResultadosData = {
     salaries: { name: string; hours: number; amount: number }[];
     supplierPayments: { supplier: string; amount: number }[];
   };
+  extras: { totalExtrasRevenue: number };
+  discounts: { totalDiscountsGiven: number };
 };
 
 const PAYMENT_LABELS: Record<string, string> = {
@@ -129,6 +131,24 @@ export default function ResultadosPage() {
                     <span className="text-emerald-700">{fmt(data.ingresos.total)}</span>
                   </div>
                 </div>
+
+                {/* Extras & discounts */}
+                {(data.extras.totalExtrasRevenue > 0 || data.discounts.totalDiscountsGiven > 0) && (
+                  <div className="space-y-1 border-t pt-3">
+                    {data.extras.totalExtrasRevenue > 0 && (
+                      <div className="flex justify-between text-sm">
+                        <span className="text-gray-600">Adicionales cobrados</span>
+                        <span className="font-semibold text-emerald-600">+{fmt(data.extras.totalExtrasRevenue)}</span>
+                      </div>
+                    )}
+                    {data.discounts.totalDiscountsGiven > 0 && (
+                      <div className="flex justify-between text-sm">
+                        <span className="text-gray-600">Descuentos otorgados</span>
+                        <span className="font-semibold text-rose-500">−{fmt(data.discounts.totalDiscountsGiven)}</span>
+                      </div>
+                    )}
+                  </div>
+                )}
 
                 {/* Payment methods breakdown */}
                 {data.breakdowns.paymentMethods.length > 0 && (

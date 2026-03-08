@@ -48,14 +48,27 @@ export async function POST(req: NextRequest, { params }: Params) {
     const productIds = body.items.map((i) => i.productId);
     const comboIds = body.comboItems.map((c) => c.comboId);
 
+    // Validate order is not empty
+    if (productIds.length === 0 && comboIds.length === 0) {
+      return NextResponse.json({ error: "El pedido debe tener al menos un producto" }, { status: 400 });
+    }
+
     const [products, combos] = await Promise.all([
       productIds.length > 0
-        ? prisma.product.findMany({ where: { id: { in: productIds }, organizationId: org.id }, select: { id: true, salePrice: true, categoryId: true } })
+        ? prisma.product.findMany({ where: { id: { in: productIds }, organizationId: org.id, isActive: true }, select: { id: true, salePrice: true, categoryId: true } })
         : [],
       comboIds.length > 0
-        ? prisma.combo.findMany({ where: { id: { in: comboIds }, organizationId: org.id }, select: { id: true, salePrice: true } })
+        ? prisma.combo.findMany({ where: { id: { in: comboIds }, organizationId: org.id, isActive: true }, select: { id: true, salePrice: true } })
         : [],
     ]);
+
+    // Reject if any product/combo is not found or inactive
+    if (products.length !== productIds.length) {
+      return NextResponse.json({ error: "Uno o más productos no están disponibles" }, { status: 400 });
+    }
+    if (combos.length !== comboIds.length) {
+      return NextResponse.json({ error: "Uno o más combos no están disponibles" }, { status: 400 });
+    }
 
     const pPrices = new Map(products.map((p) => [p.id, Number(p.salePrice)]));
     const cPrices = new Map(combos.map((c) => [c.id, Number(c.salePrice)]));

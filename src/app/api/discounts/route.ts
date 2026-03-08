@@ -3,7 +3,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { CreateDiscountSchema } from "@/lib/validators";
 import { ZodError } from "zod";
-import { requireOrg } from "@/lib/requireOrg";
+import { requireOrg, requireRole } from "@/lib/requireOrg";
 
 export async function GET(req: NextRequest) {
   let orgId: string;
@@ -31,6 +31,7 @@ export async function GET(req: NextRequest) {
 export async function POST(req: NextRequest) {
   let orgId: string;
   try { orgId = requireOrg(req); } catch (e) { return e as Response; }
+  try { requireRole(req, ["ADMIN", "ENCARGADO"]); } catch (e) { return e as Response; }
   try {
     const body = await req.json();
     const data = CreateDiscountSchema.parse(body);

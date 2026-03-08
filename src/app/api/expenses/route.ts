@@ -91,7 +91,7 @@ export async function POST(req: NextRequest) {  let orgId: string;
       include: { category: true },
     });
 
-    revalidateTag("dashboard");
+    revalidateTag(`dashboard:${orgId}`);
     return NextResponse.json(expense, { status: 201 });
   } catch (e) {
     if (e instanceof ZodError) return NextResponse.json({ error: e.issues[0].message, code: "VALIDATION_ERROR" }, { status: 400 });

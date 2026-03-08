@@ -7,6 +7,10 @@ import { format, startOfDay, endOfDay, startOfWeek, endOfWeek, startOfMonth, end
 import { es } from "date-fns/locale";
 import { downloadExcel } from "@/utils/excel";
 import { formatCurrency } from "@/utils/currency";
+import {
+  AreaChart, Area, BarChart, Bar, XAxis, YAxis, Tooltip,
+  ResponsiveContainer, CartesianGrid,
+} from "recharts";
 
 const ORDER_STATUS_LABELS: Record<string, { label: string; className: string }> = {
   NUEVO:          { label: "Nuevo",          className: "bg-blue-100 text-blue-700" },
@@ -60,6 +64,10 @@ function effectiveTotal(s: Sale): number {
 
 interface Metrics {
   summary: { totalCount: number; totalRevenue: number; avgTicket: number };
+  byDay: { date: string; total: number; count: number }[];
+  byHour: { hour: number; total: number; count: number }[];
+  byDayOfWeek: { day: number; label: string; total: number; count: number }[];
+  topProducts: { name: string; quantity: number; revenue: number }[];
   byPaymentMethod: { method: string; amount: number; count: number }[];
 }
 
@@ -200,10 +208,11 @@ export default function SalesPage() {
         </div>
       )}
 
-      {/* ── KPI cards ── */}
-      <div className={`transition-opacity ${metricsLoading ? "opacity-50" : "opacity-100"}`}>
-        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-3">
-          {/* Total ventas */}
+      {/* ── Analytics ── */}
+      <div className={`space-y-4 transition-opacity ${metricsLoading ? "opacity-50" : "opacity-100"}`}>
+
+        {/* KPI cards */}
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
           <div className="bg-white rounded-xl border border-gray-200 px-4 py-3 flex items-start gap-3">
             <div className="w-9 h-9 rounded-lg bg-blue-50 flex items-center justify-center shrink-0">
               <svg className="h-5 w-5 text-blue-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -216,7 +225,6 @@ export default function SalesPage() {
               {pendingCount > 0 && <p className="text-[11px] text-amber-600">{pendingCount} sin cobrar</p>}
             </div>
           </div>
-          {/* Recaudado */}
           <div className="bg-white rounded-xl border border-gray-200 px-4 py-3 flex items-start gap-3">
             <div className="w-9 h-9 rounded-lg bg-emerald-50 flex items-center justify-center shrink-0">
               <svg className="h-5 w-5 text-emerald-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -229,7 +237,6 @@ export default function SalesPage() {
               {pendingAmount > 0 && <p className="text-[11px] text-amber-600">Pend: {fmt(pendingAmount)}</p>}
             </div>
           </div>
-          {/* Ticket promedio */}
           <div className="bg-white rounded-xl border border-gray-200 px-4 py-3 flex items-start gap-3">
             <div className="w-9 h-9 rounded-lg bg-violet-50 flex items-center justify-center shrink-0">
               <svg className="h-5 w-5 text-violet-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -241,7 +248,6 @@ export default function SalesPage() {
               <p className="text-2xl font-bold text-gray-900">{fmt(metrics?.summary.avgTicket ?? 0)}</p>
             </div>
           </div>
-          {/* Canceladas */}
           <div className="bg-white rounded-xl border border-gray-200 px-4 py-3 flex items-start gap-3">
             <div className="w-9 h-9 rounded-lg bg-rose-50 flex items-center justify-center shrink-0">
               <svg className="h-5 w-5 text-rose-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -255,28 +261,154 @@ export default function SalesPage() {
           </div>
         </div>
 
-        {/* Payment method breakdown */}
-        {metrics && metrics.byPaymentMethod.length > 0 && (
-          <div className="bg-white rounded-xl border border-gray-200 px-4 py-3">
-            <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-3">Por método de pago</p>
-            <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-2">
-              {metrics.byPaymentMethod.map((pm) => {
-                const info = PM_LABELS[pm.method] ?? { label: pm.method };
-                const pct  = paidRevenue > 0 ? (pm.amount / paidRevenue) * 100 : 0;
-                return (
-                  <div key={pm.method} className="p-3 rounded-xl bg-gray-50 border border-gray-100">
-                    <p className="text-xs font-semibold text-gray-700 truncate">{info.label}</p>
-                    <p className="text-lg font-bold text-gray-900 mt-0.5">{fmt(pm.amount)}</p>
-                    <div className="flex items-center justify-between mt-1">
-                      <p className="text-[10px] text-gray-400">{pm.count} pago{pm.count !== 1 ? "s" : ""}</p>
-                      <span className="text-[10px] font-semibold text-gray-500 bg-gray-200 rounded-full px-1.5 py-0.5">{pct.toFixed(0)}%</span>
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
+        {/* Revenue over time */}
+        {metrics && metrics.byDay.length > 1 && (
+          <div className="bg-white rounded-xl border border-gray-200 px-4 py-4">
+            <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-4">Ingresos por día</p>
+            <ResponsiveContainer width="100%" height={160}>
+              <AreaChart data={metrics.byDay} margin={{ top: 4, right: 4, left: 0, bottom: 0 }}>
+                <defs>
+                  <linearGradient id="gradRevenue" x1="0" y1="0" x2="0" y2="1">
+                    <stop offset="5%" stopColor="#10b981" stopOpacity={0.18} />
+                    <stop offset="95%" stopColor="#10b981" stopOpacity={0} />
+                  </linearGradient>
+                </defs>
+                <CartesianGrid strokeDasharray="3 3" stroke="#f3f4f6" vertical={false} />
+                <XAxis
+                  dataKey="date"
+                  tick={{ fontSize: 10, fill: "#9ca3af" }}
+                  tickLine={false}
+                  axisLine={false}
+                  tickFormatter={(v) => format(new Date(v + "T12:00:00"), "dd/MM", { locale: es })}
+                  interval="preserveStartEnd"
+                />
+                <YAxis hide />
+                <Tooltip
+                  formatter={(v: number) => [fmt(v), "Ingresos"]}
+                  labelFormatter={(l) => format(new Date(l + "T12:00:00"), "EEEE dd/MM", { locale: es })}
+                  contentStyle={{ fontSize: 12, borderRadius: 8, border: "1px solid #e5e7eb", boxShadow: "0 2px 8px rgba(0,0,0,0.06)" }}
+                />
+                <Area type="monotone" dataKey="total" stroke="#10b981" strokeWidth={2} fill="url(#gradRevenue)" dot={false} activeDot={{ r: 4, fill: "#10b981" }} />
+              </AreaChart>
+            </ResponsiveContainer>
           </div>
         )}
+
+        {/* Top products + Payment methods */}
+        {metrics && (metrics.topProducts.length > 0 || metrics.byPaymentMethod.length > 0) && (
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+            {/* Top products */}
+            {metrics.topProducts.length > 0 && (
+              <div className="bg-white rounded-xl border border-gray-200 px-4 py-4">
+                <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-3">Top productos</p>
+                <div className="space-y-3">
+                  {metrics.topProducts.slice(0, 6).map((p, i) => {
+                    const maxRev = metrics.topProducts[0].revenue;
+                    const pct = maxRev > 0 ? (p.revenue / maxRev) * 100 : 0;
+                    return (
+                      <div key={p.name} className="flex items-start gap-3">
+                        <span className="text-[10px] font-bold text-gray-400 w-4 text-right mt-0.5 shrink-0">{i + 1}</span>
+                        <div className="flex-1 min-w-0">
+                          <div className="flex items-baseline justify-between gap-2 mb-1">
+                            <span className="text-xs font-medium text-gray-700 truncate">{p.name}</span>
+                            <span className="text-xs font-bold text-gray-900 shrink-0">{fmt(p.revenue)}</span>
+                          </div>
+                          <div className="h-1.5 bg-gray-100 rounded-full overflow-hidden">
+                            <div className="h-full bg-emerald-500 rounded-full transition-all" style={{ width: `${pct}%` }} />
+                          </div>
+                          <p className="text-[10px] text-gray-400 mt-0.5">{p.quantity} vendido{p.quantity !== 1 ? "s" : ""}</p>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+
+            {/* Payment methods */}
+            {metrics.byPaymentMethod.length > 0 && (
+              <div className="bg-white rounded-xl border border-gray-200 px-4 py-4">
+                <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-3">Métodos de pago</p>
+                <div className="space-y-3">
+                  {metrics.byPaymentMethod.map((pm) => {
+                    const info = PM_LABELS[pm.method] ?? { label: pm.method };
+                    const pmTotal = metrics.byPaymentMethod.reduce((s, p) => s + p.amount, 0);
+                    const pct = pmTotal > 0 ? (pm.amount / pmTotal) * 100 : 0;
+                    return (
+                      <div key={pm.method} className="flex items-start gap-3">
+                        <div className="flex-1 min-w-0">
+                          <div className="flex items-baseline justify-between gap-2 mb-1">
+                            <span className="text-xs font-medium text-gray-700">{info.label}</span>
+                            <span className="text-xs font-bold text-gray-900">{fmt(pm.amount)}</span>
+                          </div>
+                          <div className="h-1.5 bg-gray-100 rounded-full overflow-hidden">
+                            <div className="h-full bg-blue-500 rounded-full transition-all" style={{ width: `${pct}%` }} />
+                          </div>
+                          <p className="text-[10px] text-gray-400 mt-0.5">{pct.toFixed(0)}% · {pm.count} pago{pm.count !== 1 ? "s" : ""}</p>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* By hour + By day of week */}
+        {metrics && (metrics.byHour.some(h => h.count > 0) || metrics.byDayOfWeek.some(d => d.count > 0)) && (
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+            {/* By hour */}
+            {metrics.byHour.some(h => h.count > 0) && (
+              <div className="bg-white rounded-xl border border-gray-200 px-4 py-4">
+                <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-4">Horario pico</p>
+                <ResponsiveContainer width="100%" height={130}>
+                  <BarChart data={metrics.byHour} margin={{ top: 0, right: 0, left: 0, bottom: 0 }} barSize={7}>
+                    <XAxis
+                      dataKey="hour"
+                      tick={{ fontSize: 9, fill: "#9ca3af" }}
+                      tickLine={false}
+                      axisLine={false}
+                      tickFormatter={(h) => `${h}h`}
+                      interval={3}
+                    />
+                    <YAxis hide />
+                    <Tooltip
+                      formatter={(v: number) => [v, "Pedidos"]}
+                      labelFormatter={(l) => `${l}:00 hs`}
+                      contentStyle={{ fontSize: 12, borderRadius: 8, border: "1px solid #e5e7eb", boxShadow: "0 2px 8px rgba(0,0,0,0.06)" }}
+                    />
+                    <Bar dataKey="count" fill="#6366f1" radius={[2, 2, 0, 0]} />
+                  </BarChart>
+                </ResponsiveContainer>
+              </div>
+            )}
+
+            {/* By day of week */}
+            {metrics.byDayOfWeek.some(d => d.count > 0) && (
+              <div className="bg-white rounded-xl border border-gray-200 px-4 py-4">
+                <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-4">Día de la semana</p>
+                <ResponsiveContainer width="100%" height={130}>
+                  <BarChart data={metrics.byDayOfWeek} margin={{ top: 0, right: 0, left: 0, bottom: 0 }} barSize={24}>
+                    <XAxis
+                      dataKey="label"
+                      tick={{ fontSize: 10, fill: "#9ca3af" }}
+                      tickLine={false}
+                      axisLine={false}
+                    />
+                    <YAxis hide />
+                    <Tooltip
+                      formatter={(v: number) => [v, "Pedidos"]}
+                      contentStyle={{ fontSize: 12, borderRadius: 8, border: "1px solid #e5e7eb", boxShadow: "0 2px 8px rgba(0,0,0,0.06)" }}
+                    />
+                    <Bar dataKey="count" fill="#f59e0b" radius={[3, 3, 0, 0]} />
+                  </BarChart>
+                </ResponsiveContainer>
+              </div>
+            )}
+          </div>
+        )}
+
       </div>
 
       {/* ── Table ── */}

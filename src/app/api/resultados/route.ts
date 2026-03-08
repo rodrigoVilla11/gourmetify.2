@@ -39,7 +39,21 @@ export async function GET(req: NextRequest) {  let orgId: string;
         }),
         prisma.saleItem.findMany({
           where: { sale: { organizationId: orgId, orderStatus: "ENTREGADO", date: dateRange } },
-          select: { quantity: true, product: { select: { costPrice: true } } },
+          select: {
+            quantity: true,
+            product: {
+              select: {
+                costPrice: true,
+                ingredients: {
+                  select: {
+                    qty: true,
+                    wastagePct: true,
+                    ingredient: { select: { costPerUnit: true } },
+                  },
+                },
+              },
+            },
+          },
         }),
         prisma.sale.aggregate({
           _sum: { extrasAmount: true, discountAmount: true },
@@ -104,10 +118,21 @@ export async function GET(req: NextRequest) {  let orgId: string;
     const totalSalaries = salaries.reduce((sum, s) => sum + s.amount, 0);
 
     // ── Costos — mercadería (COGS) ────────────────────────────────────────────
-    const cogs = saleItems.reduce(
-      (sum, i) => sum + Number(i.quantity) * Number(i.product.costPrice),
-      0
-    );
+    // Uses BOM with wastage when ingredients are defined; falls back to product.costPrice.
+    const cogs = saleItems.reduce((sum, i) => {
+      const qty = Number(i.quantity);
+      const bom = i.product.ingredients;
+      if (bom.length > 0) {
+        // Compute from ingredient BOM applying wastage factor
+        const ingredientCost = bom.reduce((s, ing) => {
+          const wasteFactor = 1 + Number(ing.wastagePct) / 100;
+          return s + Number(ing.qty) * wasteFactor * Number(ing.ingredient.costPerUnit);
+        }, 0);
+        return sum + qty * ingredientCost;
+      }
+      // Fallback: manually-set product cost price
+      return sum + qty * Number(i.product.costPrice);
+    }, 0);
 
     // ── Totales ───────────────────────────────────────────────────────────────
     const totalCostos = totalExpenses + totalSupplierPayments + totalSalaries + cogs;

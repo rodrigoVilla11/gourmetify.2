@@ -20,7 +20,8 @@
       "Bash(npx prisma:*)",
       "Bash(npx tsc:*)",
       "Bash(npm install:*)",
-      "Bash(wc:*)"
+      "Bash(wc:*)",
+      "Bash(cat:*)"
     ]
   }
 }

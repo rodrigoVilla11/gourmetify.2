@@ -117,7 +117,8 @@ export function computeOrderPricing(params: {
   const bestDiscount = findBestDiscount(discounts, subtotalForDiscount, discountCtx);
   const discountAmount = bestDiscount?.amount ?? 0;
 
-  const total = subtotalForDiscount - discountAmount + paymentAdjustmentAmount;
+  // Prevent negative totals (discount + negative adjustment can't exceed subtotal)
+  const total = Math.max(0, subtotalForDiscount - discountAmount + paymentAdjustmentAmount);
 
   return {
     itemsSubtotal,

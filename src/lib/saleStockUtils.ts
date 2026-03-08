@@ -111,15 +111,16 @@ export async function deductSaleStock(
   saleId: string,
   items: { productId: string; quantity: number }[],
   comboItems: { comboId: string; quantity: number }[],
-  orgId?: string
+  orgId: string
 ): Promise<{ ingredientId?: string; preparationId?: string; name: string; currentStock: number; required: number; deficit: number }[]> {
   const productIds = items.map((i) => i.productId);
   const comboIds = comboItems.map((c) => c.comboId);
 
+  // organizationId filter is required here to prevent cross-tenant stock manipulation
   const [products, combos] = await Promise.all([
     productIds.length > 0
       ? tx.product.findMany({
-          where: { id: { in: productIds } },
+          where: { id: { in: productIds }, organizationId: orgId },
           include: {
             ingredients: { include: { ingredient: true } },
             preparations: { include: { preparation: true } },
@@ -128,7 +129,7 @@ export async function deductSaleStock(
       : [],
     comboIds.length > 0
       ? tx.combo.findMany({
-          where: { id: { in: comboIds } },
+          where: { id: { in: comboIds }, organizationId: orgId },
           include: {
             products: {
               include: {
@@ -160,7 +161,7 @@ export async function deductSaleStock(
     }
     await tx.ingredient.update({ where: { id: ingredientId }, data: { onHand: { decrement: info.delta } } });
     await tx.stockMovement.create({
-      data: { ingredientId, organizationId: orgId ?? "", type: "SALE", delta: -info.delta, reason: `Venta ${saleId}`, refId: saleId },
+      data: { ingredientId, organizationId: orgId, type: "SALE", delta: -info.delta, reason: `Venta ${saleId}`, refId: saleId },
     });
   }
 
@@ -170,7 +171,7 @@ export async function deductSaleStock(
     }
     await tx.preparation.update({ where: { id: preparationId }, data: { onHand: { decrement: info.delta } } });
     await tx.preparationMovement.create({
-      data: { preparationId, organizationId: orgId ?? "", type: "SALE", delta: -info.delta, reason: `Venta ${saleId}` },
+      data: { preparationId, organizationId: orgId, type: "SALE", delta: -info.delta, reason: `Venta ${saleId}` },
     });
   }
 
@@ -182,15 +183,16 @@ export async function returnSaleStock(
   saleId: string,
   items: { productId: string; quantity: number }[],
   comboItems: { comboId: string; quantity: number }[],
-  orgId?: string
+  orgId: string
 ): Promise<void> {
   const productIds = items.map((i) => i.productId);
   const comboIds   = comboItems.map((c) => c.comboId);
 
+  // organizationId filter prevents cross-tenant stock corruption
   const [products, combos] = await Promise.all([
     productIds.length > 0
       ? tx.product.findMany({
-          where: { id: { in: productIds } },
+          where: { id: { in: productIds }, organizationId: orgId },
           include: {
             ingredients: { include: { ingredient: true } },
             preparations: { include: { preparation: true } },
@@ -199,7 +201,7 @@ export async function returnSaleStock(
       : [],
     comboIds.length > 0
       ? tx.combo.findMany({
-          where: { id: { in: comboIds } },
+          where: { id: { in: comboIds }, organizationId: orgId },
           include: {
             products: {
               include: {
@@ -226,14 +228,14 @@ export async function returnSaleStock(
   for (const [ingredientId, info] of Array.from(deductionMap.entries())) {
     await tx.ingredient.update({ where: { id: ingredientId }, data: { onHand: { increment: info.delta } } });
     await tx.stockMovement.create({
-      data: { ingredientId, organizationId: orgId ?? "", type: "ADJUSTMENT", delta: info.delta, reason: `Edición venta ${saleId}`, refId: saleId },
+      data: { ingredientId, organizationId: orgId, type: "ADJUSTMENT", delta: info.delta, reason: `Edición venta ${saleId}`, refId: saleId },
     });
   }
 
   for (const [preparationId, info] of Array.from(prepDeductionMap.entries())) {
     await tx.preparation.update({ where: { id: preparationId }, data: { onHand: { increment: info.delta } } });
     await tx.preparationMovement.create({
-      data: { preparationId, organizationId: orgId ?? "", type: "ADJUSTMENT", delta: info.delta, reason: `Edición venta ${saleId}` },
+      data: { preparationId, organizationId: orgId, type: "ADJUSTMENT", delta: info.delta, reason: `Edición venta ${saleId}` },
     });
   }
 }

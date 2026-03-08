@@ -420,7 +420,7 @@ export const UpdateUserSchema = z.object({
 
 // ── Discounts ─────────────────────────────────────────────────────────────────
 
-export const CreateDiscountSchema = z.object({
+const DiscountBaseSchema = z.object({
   name:          z.string().min(1, "Nombre requerido").max(255),
   description:   z.string().optional().nullable(),
   isActive:      z.boolean().default(true),
@@ -440,7 +440,16 @@ export const CreateDiscountSchema = z.object({
   sortOrder:     z.coerce.number().int().min(0).default(0),
 });
 
-export const UpdateDiscountSchema = CreateDiscountSchema.partial();
+export const CreateDiscountSchema = DiscountBaseSchema.superRefine((data, ctx) => {
+  if (data.discountType === "PERCENTAGE" && data.value > 100) {
+    ctx.addIssue({ code: z.ZodIssueCode.custom, message: "El porcentaje de descuento no puede superar 100%", path: ["value"] });
+  }
+  if (data.dateFrom && data.dateTo && new Date(data.dateFrom) > new Date(data.dateTo)) {
+    ctx.addIssue({ code: z.ZodIssueCode.custom, message: "La fecha desde debe ser anterior a la fecha hasta", path: ["dateFrom"] });
+  }
+});
+
+export const UpdateDiscountSchema = DiscountBaseSchema.partial();
 
 // ── Extras ────────────────────────────────────────────────────────────────────
 
