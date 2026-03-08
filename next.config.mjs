@@ -1,8 +1,6 @@
 /** @type {import('next').NextConfig} */
 const nextConfig = {
-  experimental: {
-    serverComponentsExternalPackages: ["@prisma/client", "cloudinary"],
-  },
+  serverExternalPackages: ["@prisma/client", "cloudinary", "bcryptjs"],
 };
 
 export default nextConfig;

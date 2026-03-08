@@ -15,12 +15,16 @@ export default async function DashboardLayout({
   let orgName: string | undefined;
   let orgSlug: string | undefined;
   if (session.organizationId) {
-    const org = await prisma.organization.findUnique({
-      where: { id: session.organizationId },
-      select: { name: true, slug: true },
-    });
-    orgName = org?.name ?? undefined;
-    orgSlug = org?.slug ?? undefined;
+    try {
+      const org = await prisma.organization.findUnique({
+        where: { id: session.organizationId },
+        select: { name: true, slug: true },
+      });
+      orgName = org?.name ?? undefined;
+      orgSlug = org?.slug ?? undefined;
+    } catch {
+      // DB temporarily unavailable — continue without org name
+    }
   }
 
   // Derive effective plan from JWT (no extra DB query)
